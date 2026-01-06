@@ -1,5 +1,6 @@
 import sqlite3
 from pathlib import Path
+from typing import Iterable
 
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "vocab.db"
@@ -17,6 +18,7 @@ def init_db():
     with get_connection() as conn, open(SCHEMA_PATH, "r", encoding="utf-8") as schema_file:
         conn.executescript(schema_file.read())
         conn.commit()
+        _ensure_columns(conn)
 
 
 def seed_sample_data():
@@ -28,10 +30,20 @@ def seed_sample_data():
         for note, eng, kor, phrases, examples in sample_rows:
             conn.execute(
                 """
-                INSERT INTO vocab_items (note, english, korean, phrases, examples)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO vocab_items (note, english, korean, phrases, examples, noun_forms, verb_forms, adj_forms, ipa)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (note, eng, kor, json_dumps(phrases), json_dumps(examples)),
+                (
+                    note,
+                    eng,
+                    kor,
+                    json_dumps(phrases),
+                    json_dumps(examples),
+                    json_dumps([]),
+                    json_dumps([]),
+                    json_dumps([]),
+                    "",
+                ),
             )
         conn.commit()
 
@@ -41,3 +53,16 @@ def json_dumps(payload):
 
     return json.dumps(payload, ensure_ascii=False)
 
+
+def _ensure_columns(conn):
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(vocab_items)")}
+    wanted_defaults = {
+        "noun_forms": "TEXT DEFAULT '[]'",
+        "verb_forms": "TEXT DEFAULT '[]'",
+        "adj_forms": "TEXT DEFAULT '[]'",
+        "ipa": "TEXT DEFAULT ''",
+    }
+    for column, definition in wanted_defaults.items():
+        if column not in existing:
+            conn.execute(f"ALTER TABLE vocab_items ADD COLUMN {column} {definition}")
+    conn.commit()

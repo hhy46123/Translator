@@ -17,13 +17,27 @@ const verbFormsEl = document.getElementById("verbForms");
 const adjFormsEl = document.getElementById("adjForms");
 const phrasesEl = document.getElementById("phrases");
 const examplesEl = document.getElementById("examples");
-const vocabBody = document.getElementById("vocabBody");
 const overlay = document.getElementById("overlay");
 const closeModalBtn = document.getElementById("closeModal");
 const installBtn = document.getElementById("installBtn");
+const navButtons = document.querySelectorAll(".nav-btn");
+const translateView = document.getElementById("translateView");
+const notebookView = document.getElementById("notebookView");
+const pageIndicator = document.getElementById("pageIndicator");
+const prevPage = document.getElementById("prevPage");
+const nextPage = document.getElementById("nextPage");
+const pageContent = document.getElementById("pageContent");
+const pageCard = document.getElementById("pageCard");
+const detailsOverlay = document.getElementById("detailsOverlay");
+const closeDetails = document.getElementById("closeDetails");
+const detailsContent = document.getElementById("detailsContent");
 
 let pendingInstallEvent = null;
 let activeRowId = null;
+let vocabItems = [];
+let currentIndex = 0;
+let debounceTimer = null;
+const AUTO_TRANSLATE_DELAY = 600;
 
 async function fetchJSON(url, options = {}) {
   const res = await fetch(url, {
@@ -46,14 +60,14 @@ function populateList(element, items) {
   });
 }
 
-async function translate() {
+async function translate(options = {}) {
   const text = inputText.value.trim();
   if (!text) return;
   const note = newNoteInput.value.trim() || noteSelect.value;
   const payload = {
     text,
     note,
-    save: saveToggle.checked,
+    save: options.save === undefined ? saveToggle.checked : options.save,
   };
   const data = await fetchJSON("/api/translate", {
     method: "POST",
@@ -102,60 +116,9 @@ async function loadNotes() {
 async function loadVocab(note = null) {
   const params = note ? `?note=${encodeURIComponent(note)}` : "";
   const { items } = await fetchJSON(`/api/vocab${params}`);
-  vocabBody.innerHTML = "";
-  items.forEach((item) => vocabBody.appendChild(buildRow(item)));
-}
-
-function buildRow(item) {
-  const tr = document.createElement("tr");
-  tr.dataset.id = item.id;
-
-  const wrongBtn = document.createElement("button");
-  wrongBtn.textContent = item.wrong_count;
-  wrongBtn.className = "wrong-btn";
-  wrongBtn.style.background = colorForWrong(item.wrong_count);
-  wrongBtn.addEventListener("click", () => incrementWrong(item.id, wrongBtn));
-
-  const wrongTd = document.createElement("td");
-  wrongTd.appendChild(wrongBtn);
-
-  const enTd = document.createElement("td");
-  enTd.textContent = item.english;
-
-  const koTd = document.createElement("td");
-  const cover = document.createElement("div");
-  cover.className = "cover";
-  const meaning = document.createElement("div");
-  meaning.className = "meaning";
-  meaning.textContent = item.korean;
-  koTd.appendChild(cover);
-  koTd.appendChild(meaning);
-
-  cover.addEventListener("click", () => {
-    cover.style.display = "none";
-    meaning.style.display = "block";
-    activeRowId = item.id;
-    overlay.classList.remove("hidden");
-  });
-
-  const successTd = document.createElement("td");
-  successTd.className = "success-rate";
-  successTd.textContent = `${item.success_rate}%`;
-
-  const actionsTd = document.createElement("td");
-  actionsTd.innerHTML = `
-    <button class="ghost-btn" data-action="details">Details</button>
-    <button class="ghost-btn" data-action="delete">Delete</button>
-  `;
-  actionsTd.addEventListener("click", (e) => handleActionClick(e, item));
-
-  tr.appendChild(wrongTd);
-  tr.appendChild(enTd);
-  tr.appendChild(koTd);
-  tr.appendChild(successTd);
-  tr.appendChild(actionsTd);
-
-  return tr;
+  vocabItems = items;
+  currentIndex = 0;
+  renderPage();
 }
 
 function colorForWrong(count) {
@@ -170,6 +133,10 @@ async function incrementWrong(id, button) {
   const data = await fetchJSON(`/api/vocab/${id}/wrong/increment`, { method: "POST" });
   button.textContent = data.wrong_count;
   button.style.background = colorForWrong(data.wrong_count);
+  const idx = vocabItems.findIndex((v) => v.id === id);
+  if (idx >= 0) {
+    vocabItems[idx].wrong_count = data.wrong_count;
+  }
 }
 
 async function handleActionClick(event, item) {
@@ -180,11 +147,7 @@ async function handleActionClick(event, item) {
     await loadVocab(noteFilter.value);
   }
   if (action === "details") {
-    const details = [
-      `Phrases: ${(item.phrases || []).join(", ")}`,
-      `Examples: ${(item.examples || []).join(" | ")}`,
-    ].join("\n");
-    alert(details || "No extra details");
+    showDetailsModal(item);
   }
 }
 
@@ -264,3 +227,152 @@ async function init() {
 }
 
 init();
+
+function renderPage(direction = null) {
+  pageIndicator.textContent = vocabItems.length
+    ? `${currentIndex + 1}/${vocabItems.length}`
+    : "0/0";
+  pageContent.innerHTML = "";
+  if (!vocabItems.length) {
+    pageContent.innerHTML = "<p class='detail'>No items yet.</p>";
+    return;
+  }
+  const item = vocabItems[currentIndex];
+  const wrongBtn = document.createElement("button");
+  wrongBtn.textContent = item.wrong_count;
+  wrongBtn.className = "wrong-btn";
+  wrongBtn.style.background = colorForWrong(item.wrong_count);
+  wrongBtn.addEventListener("click", () => incrementWrong(item.id, wrongBtn));
+
+  const cover = document.createElement("div");
+  cover.className = "cover";
+  const meaning = document.createElement("div");
+  meaning.className = "meaning page-meaning";
+  meaning.textContent = item.korean;
+
+  cover.addEventListener("click", () => {
+    cover.style.display = "none";
+    meaning.style.display = "block";
+    activeRowId = item.id;
+    overlay.classList.remove("hidden");
+  });
+
+  const header = document.createElement("div");
+  header.className = "page-content-header";
+  header.innerHTML = `<h3>${item.english}</h3>`;
+  header.appendChild(wrongBtn);
+
+  const meta = document.createElement("div");
+  meta.className = "page-meta";
+  const success = document.createElement("span");
+  success.className = "chip";
+  success.textContent = `Success: ${item.success_rate}%`;
+  const noteTag = document.createElement("span");
+  noteTag.className = "chip";
+  noteTag.textContent = `Note: ${item.note}`;
+  meta.appendChild(success);
+  meta.appendChild(noteTag);
+
+  const actions = document.createElement("div");
+  actions.className = "btn-row";
+  const detailsBtn = document.createElement("button");
+  detailsBtn.className = "ghost-btn";
+  detailsBtn.textContent = "Details";
+  detailsBtn.dataset.action = "details";
+  detailsBtn.addEventListener("click", (e) => handleActionClick(e, item));
+  const deleteBtn = document.createElement("button");
+  deleteBtn.className = "ghost-btn";
+  deleteBtn.textContent = "Delete";
+  deleteBtn.dataset.action = "delete";
+  deleteBtn.addEventListener("click", (e) => handleActionClick(e, item));
+  actions.appendChild(detailsBtn);
+  actions.appendChild(deleteBtn);
+
+  pageContent.appendChild(header);
+  pageContent.appendChild(meta);
+  pageContent.appendChild(cover);
+  pageContent.appendChild(meaning);
+  pageContent.appendChild(actions);
+
+  if (direction === "left") {
+    pageCard.classList.add("slide-left");
+    requestAnimationFrame(() => {
+      pageCard.classList.remove("slide-left");
+    });
+  } else if (direction === "right") {
+    pageCard.classList.add("slide-right");
+    requestAnimationFrame(() => {
+      pageCard.classList.remove("slide-right");
+    });
+  }
+}
+
+prevPage.addEventListener("click", () => {
+  if (!vocabItems.length) return;
+  currentIndex = (currentIndex - 1 + vocabItems.length) % vocabItems.length;
+  renderPage("left");
+});
+
+nextPage.addEventListener("click", () => {
+  if (!vocabItems.length) return;
+  currentIndex = (currentIndex + 1) % vocabItems.length;
+  renderPage("right");
+});
+
+document.addEventListener("keydown", (e) => {
+  if (notebookView.classList.contains("active")) {
+    if (e.key === "ArrowLeft") prevPage.click();
+    if (e.key === "ArrowRight") nextPage.click();
+  }
+});
+
+navButtons.forEach((btn) => {
+  btn.addEventListener("click", () => {
+    navButtons.forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    const target = btn.dataset.target;
+    document.querySelectorAll(".view").forEach((view) => {
+      view.classList.toggle("active", view.id === target);
+    });
+  });
+});
+
+function showDetailsModal(item) {
+  const phrases = item.phrases && item.phrases.length ? item.phrases : ["No phrases"];
+  const examples = item.examples && item.examples.length ? item.examples : ["No examples"];
+  const nounForms = item.noun_forms && item.noun_forms.length ? item.noun_forms : [];
+  const verbForms = item.verb_forms && item.verb_forms.length ? item.verb_forms : [];
+  const adjForms = item.adj_forms && item.adj_forms.length ? item.adj_forms : [];
+  const ipa = item.ipa || "N/A";
+
+  detailsContent.innerHTML = `
+    <p><strong>IPA:</strong> ${ipa}</p>
+    <div class="detail-list">
+      <h4>Noun forms</h4>
+      <ul>${(nounForms.length ? nounForms : ["None"]).map((x) => `<li>${x}</li>`).join("")}</ul>
+      <h4>Verb forms</h4>
+      <ul>${(verbForms.length ? verbForms : ["None"]).map((x) => `<li>${x}</li>`).join("")}</ul>
+      <h4>Adjective forms</h4>
+      <ul>${(adjForms.length ? adjForms : ["None"]).map((x) => `<li>${x}</li>`).join("")}</ul>
+      <h4>Phrases / Idioms</h4>
+      <ul>${phrases.map((x) => `<li>${x}</li>`).join("")}</ul>
+      <h4>Examples</h4>
+      <ul>${examples.map((x) => `<li>${x}</li>`).join("")}</ul>
+    </div>
+  `;
+  detailsOverlay.classList.remove("hidden");
+}
+
+closeDetails.addEventListener("click", () => detailsOverlay.classList.add("hidden"));
+detailsOverlay.addEventListener("click", (e) => {
+  if (e.target === detailsOverlay) detailsOverlay.classList.add("hidden");
+});
+
+function debounceTranslate() {
+  clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(() => {
+    translate({ save: false });
+  }, AUTO_TRANSLATE_DELAY);
+}
+
+inputText.addEventListener("input", debounceTranslate);

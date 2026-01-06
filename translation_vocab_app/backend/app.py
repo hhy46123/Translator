@@ -72,6 +72,10 @@ def translate(req: TranslateRequest):
             note=req.note or "daily",
             phrases=result.related.get("phrases", []),
             examples=result.related.get("examples", []),
+            noun_forms=result.related.get("noun_forms", []),
+            verb_forms=result.related.get("verb_forms", []),
+            adj_forms=result.related.get("adj_forms", []),
+            ipa=result.ipa,
         )
         saved_payload = saved
     else:

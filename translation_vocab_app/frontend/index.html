@@ -6,7 +6,6 @@
     <title>Translation + Vocabulary Notebook</title>
     <link rel="manifest" href="/pwa/manifest.json" />
     <link rel="stylesheet" href="/assets/styles.css" />
-    <link rel="icon" href="/pwa/icon-192.png" />
   </head>
   <body>
     <header>
@@ -17,89 +16,98 @@
       <button id="installBtn" class="ghost-btn">Install App</button>
     </header>
 
-    <section class="card">
-      <div class="input-row">
-        <textarea id="inputText" placeholder="Type or paste text to translate"></textarea>
-        <div class="controls">
-          <div class="btn-row">
-            <button id="pasteBtn">Paste</button>
-            <button id="translateBtn" class="primary">Translate</button>
+    <main>
+      <section id="translateView" class="view active">
+        <section class="card">
+          <div class="input-row">
+            <textarea id="inputText" placeholder="Type or paste text to translate"></textarea>
+            <div class="controls">
+              <div class="btn-row">
+                <button id="pasteBtn">Paste</button>
+                <button id="translateBtn" class="primary">Translate</button>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="saveToggle" checked />
+                <span>Save to note</span>
+              </label>
+              <div class="note-row">
+                <select id="noteSelect">
+                  <option value="daily">daily</option>
+                  <option value="vocab">vocab</option>
+                </select>
+                <input id="newNoteInput" type="text" placeholder="Add new note" />
+                <button id="addNoteBtn" class="ghost-btn">Add note</button>
+              </div>
+            </div>
           </div>
-          <label class="toggle">
-            <input type="checkbox" id="saveToggle" checked />
-            <span>Save to note</span>
-          </label>
-          <div class="note-row">
-            <select id="noteSelect">
-              <option value="daily">daily</option>
-              <option value="vocab">vocab</option>
-            </select>
-            <input id="newNoteInput" type="text" placeholder="Add new note" />
-            <button id="addNoteBtn" class="ghost-btn">Add note</button>
+        </section>
+
+        <section class="card" id="resultCard" hidden>
+          <h2>Translation</h2>
+          <p id="resultLanguages"></p>
+          <div class="result-grid">
+            <div>
+              <h3>Original</h3>
+              <p id="originalText"></p>
+            </div>
+            <div>
+              <h3>Translated</h3>
+              <p id="translatedText"></p>
+              <p class="ipa" id="ipaText"></p>
+            </div>
           </div>
-        </div>
-      </div>
-    </section>
+          <div class="related">
+            <div>
+              <h4>Noun forms</h4>
+              <ul id="nounForms"></ul>
+            </div>
+            <div>
+              <h4>Verb forms</h4>
+              <ul id="verbForms"></ul>
+            </div>
+            <div>
+              <h4>Adjective forms</h4>
+              <ul id="adjForms"></ul>
+            </div>
+            <div>
+              <h4>Phrases / Idioms</h4>
+              <ul id="phrases"></ul>
+            </div>
+            <div class="full-span">
+              <h4>Examples</h4>
+              <ul id="examples"></ul>
+            </div>
+          </div>
+        </section>
+      </section>
 
-    <section class="card" id="resultCard" hidden>
-      <h2>Translation</h2>
-      <p id="resultLanguages"></p>
-      <div class="result-grid">
-        <div>
-          <h3>Original</h3>
-          <p id="originalText"></p>
-        </div>
-        <div>
-          <h3>Translated</h3>
-          <p id="translatedText"></p>
-          <p class="ipa" id="ipaText"></p>
-        </div>
-      </div>
-      <div class="related">
-        <div>
-          <h4>Noun forms</h4>
-          <ul id="nounForms"></ul>
-        </div>
-        <div>
-          <h4>Verb forms</h4>
-          <ul id="verbForms"></ul>
-        </div>
-        <div>
-          <h4>Adjective forms</h4>
-          <ul id="adjForms"></ul>
-        </div>
-        <div>
-          <h4>Phrases / Idioms</h4>
-          <ul id="phrases"></ul>
-        </div>
-        <div class="full-span">
-          <h4>Examples</h4>
-          <ul id="examples"></ul>
-        </div>
-      </div>
-    </section>
+      <section id="notebookView" class="view">
+        <section class="card">
+          <div class="list-header">
+            <div class="note-filter">
+              <label for="noteFilter">Notebook:</label>
+              <select id="noteFilter"></select>
+            </div>
+            <button id="refreshBtn" class="ghost-btn">Refresh</button>
+            <div class="page-controls">
+              <button id="prevPage" class="ghost-btn">Prev</button>
+              <span id="pageIndicator">0/0</span>
+              <button id="nextPage" class="ghost-btn">Next</button>
+            </div>
+          </div>
+          <div id="pageContainer" class="page-container">
+            <div id="pageCard" class="page-card">
+              <div id="pageContent"></div>
+            </div>
+          </div>
+        </section>
+      </section>
+    </main>
 
-    <section class="card">
-      <div class="list-header">
-        <div class="note-filter">
-          <label for="noteFilter">Notebook:</label>
-          <select id="noteFilter"></select>
-        </div>
-        <button id="refreshBtn" class="ghost-btn">Refresh</button>
-      </div>
-      <table id="vocabTable">
-        <thead>
-          <tr>
-            <th>Wrong</th>
-            <th>English</th>
-            <th>Korean</th>
-            <th>Success</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody id="vocabBody"></tbody>
-      </table>
-    </section>
+    <nav class="bottom-nav">
+      <button data-target="translateView" class="nav-btn active">Translate</button>
+      <button data-target="notebookView" class="nav-btn">Notebook</button>
+    </nav>
 
     <div id="overlay" class="overlay hidden">
       <div class="modal">
@@ -109,6 +117,14 @@
           <button data-result="X">X</button>
         </div>
         <button id="closeModal" class="ghost-btn">Cancel</button>
+      </div>
+    </div>
+
+    <div id="detailsOverlay" class="overlay hidden">
+      <div class="modal large">
+        <h3>Details</h3>
+        <div id="detailsContent"></div>
+        <button id="closeDetails" class="ghost-btn">Close</button>
       </div>
     </div>
 

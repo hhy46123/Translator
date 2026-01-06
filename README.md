@@ -30,14 +30,19 @@ translation_vocab_app/
    - Windows: `python -m venv venv && venv\\Scripts\\activate`  
    - macOS/Linux: `python -m venv venv && source venv/bin/activate`  
 3) Install dependencies: `pip install -r requirements.txt`  
-4) Start the server: `uvicorn app:app --reload --port 8000`  
+4) Start the server: `uvicorn app:app --port 8000`  
 5) Open http://localhost:8000 in your browser. The backend serves the frontend directly, so CORS is not required.
 
 ## Features
 - Translation + enrichment (IPA, related forms, phrases, examples) with pluggable providers and offline-safe fallback.
-- Vocabulary notebook with notes/categories (`daily`, `vocab`, or custom), wrong-count tracking, success rate, and O/X grading modal.
+- Auto-translate: typing/paste triggers translation after a short debounce (default ~600ms). “Translate” button remains as a manual fallback.
+- Vocabulary notebook with notes/categories (`daily`, `vocab`, or custom), wrong-count tracking, success rate, O/X grading modal, and page-flip navigation.
 - SQLite persistence; database file is created automatically on first run. Optional `/api/seed` endpoint seeds sample data.
 - PWA manifest + service worker for offline-friendly usage; “Install app” prompt supported when eligible.
+
+## UI navigation
+- Bottom navigation toggles between **Translate** and **Notebook** views within the same page.
+- Notebook uses a single-item “page” view with Prev/Next buttons (arrow keys supported) and a page indicator (e.g., 3/40). Page transitions slide horizontally for a book-like feel.
 
 ## API overview
 - `POST /api/translate` – translate and optionally save `{ text, note, save }`.

@@ -14,6 +14,10 @@ def serialize_row(row) -> Dict:
         "korean": row["korean"],
         "phrases": json.loads(row["phrases"] or "[]"),
         "examples": json.loads(row["examples"] or "[]"),
+        "noun_forms": json.loads(row["noun_forms"] or "[]") if "noun_forms" in row.keys() else [],
+        "verb_forms": json.loads(row["verb_forms"] or "[]") if "verb_forms" in row.keys() else [],
+        "adj_forms": json.loads(row["adj_forms"] or "[]") if "adj_forms" in row.keys() else [],
+        "ipa": row["ipa"] if "ipa" in row.keys() else "",
         "wrong_count": row["wrong_count"],
         "attempts_total": row["attempts_total"],
         "attempts_correct": row["attempts_correct"],
@@ -57,16 +61,40 @@ def list_vocab(note: Optional[str] = None) -> List[Dict]:
         return [serialize_row(row) for row in rows]
 
 
-def create_vocab(english: str, korean: str, note: str, phrases=None, examples=None) -> Dict:
+def create_vocab(
+    english: str,
+    korean: str,
+    note: str,
+    phrases=None,
+    examples=None,
+    noun_forms=None,
+    verb_forms=None,
+    adj_forms=None,
+    ipa: str | None = "",
+) -> Dict:
     phrases = phrases or []
     examples = examples or []
+    noun_forms = noun_forms or []
+    verb_forms = verb_forms or []
+    adj_forms = adj_forms or []
+    ipa = ipa or ""
     with get_connection() as conn:
         cursor = conn.execute(
             """
-            INSERT INTO vocab_items (english, korean, note, phrases, examples)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO vocab_items (english, korean, note, phrases, examples, noun_forms, verb_forms, adj_forms, ipa)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (english, korean, note, json_dumps(phrases), json_dumps(examples)),
+            (
+                english,
+                korean,
+                note,
+                json_dumps(phrases),
+                json_dumps(examples),
+                json_dumps(noun_forms),
+                json_dumps(verb_forms),
+                json_dumps(adj_forms),
+                ipa,
+            ),
         )
         conn.commit()
         item_id = cursor.lastrowid
