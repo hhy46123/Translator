@@ -1,0 +1,1 @@
+Placeholder for 192x192 PWA icon. Add a real PNG asset before shipping.

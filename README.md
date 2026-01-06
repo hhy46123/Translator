@@ -1,1 +1,53 @@
-# Translator
+# Translation + Vocabulary PWA
+
+Local, mobile-friendly English ↔ Korean translation and vocabulary trainer. FastAPI backend serves a vanilla JS frontend with PWA support and SQLite persistence.
+
+## Project layout
+```
+translation_vocab_app/
+  backend/
+    app.py            # FastAPI entrypoint
+    db.py             # SQLite helpers + initializer
+    models.sql        # DB schema
+    services/
+      translate.py    # Pluggable translation provider (googletrans + fallback)
+      vocab.py        # Vocabulary CRUD + scoring helpers
+    requirements.txt
+  frontend/
+    index.html
+    app.js
+    styles.css
+    pwa/
+      manifest.json
+      service-worker.js
+      icon-192.png
+      icon-512.png
+```
+
+## Run instructions
+1) `cd translation_vocab_app/backend`  
+2) Create & activate a virtual environment:  
+   - Windows: `python -m venv venv && venv\\Scripts\\activate`  
+   - macOS/Linux: `python -m venv venv && source venv/bin/activate`  
+3) Install dependencies: `pip install -r requirements.txt`  
+4) Start the server: `uvicorn app:app --reload --port 8000`  
+5) Open http://localhost:8000 in your browser. The backend serves the frontend directly, so CORS is not required.
+
+## Features
+- Translation + enrichment (IPA, related forms, phrases, examples) with pluggable providers and offline-safe fallback.
+- Vocabulary notebook with notes/categories (`daily`, `vocab`, or custom), wrong-count tracking, success rate, and O/X grading modal.
+- SQLite persistence; database file is created automatically on first run. Optional `/api/seed` endpoint seeds sample data.
+- PWA manifest + service worker for offline-friendly usage; “Install app” prompt supported when eligible.
+
+## API overview
+- `POST /api/translate` – translate and optionally save `{ text, note, save }`.
+- `POST /api/vocab` – create a vocab entry.
+- `GET /api/notes` – list note names.
+- `GET /api/vocab?note=daily` – list vocab items.
+- `DELETE /api/vocab/{id}` – delete entry.
+- `POST /api/vocab/{id}/wrong/increment` – increment wrong count (color-coded).
+- `POST /api/vocab/{id}/wrong/reset` – reset wrong count.
+- `POST /api/vocab/{id}/attempt` – record O/X attempt and success rate.
+
+## Clipboard behavior
+Browsers cannot watch the clipboard continuously. The UI provides a **Paste** button plus auto-translate on input/paste events (and Ctrl+V where supported).

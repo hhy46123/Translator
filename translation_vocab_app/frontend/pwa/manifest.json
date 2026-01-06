@@ -1,0 +1,8 @@
+{
+  "name": "Translation + Vocabulary Notebook",
+  "short_name": "Translator",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#4f46e5"
+}
