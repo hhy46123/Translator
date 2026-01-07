@@ -171,51 +171,43 @@ class HttpFallbackProvider(TranslationProvider):
         )
 
 
-class OfflineProvider(TranslationProvider):
-    name = "offline"
-
-    def __init__(self) -> None:
-        self.en_to_ko = {
-            "hello": "안녕하세요",
-            "hi": "안녕",
-            "love": "사랑",
-            "apple": "사과",
-            "water": "물",
-            "study": "공부하다",
-            "food": "음식",
-            "book": "책",
-        }
-        self.ko_to_en = {v: k for k, v in self.en_to_ko.items()}
-        # extend manual pairs
-        self.ko_to_en.update(
-            {
-                "사랑": "love",
-                "안녕하세요": "hello",
-                "안녕": "hi",
-                "고마워요": "thank you",
-                "감사합니다": "thank you",
-                "물": "water",
-                "사과": "apple",
-                "공부하다": "study",
-                "음식": "food",
-                "책": "book",
-            }
-        )
+class ArgosProvider(TranslationProvider):
+    name = "argos"
 
     def translate(self, text: str, src_lang: str, dest_lang: str, timeout: int = 5) -> ProviderOutput:
-        key = text.strip()
-        if src_lang.startswith("en"):
-            translated = self.en_to_ko.get(key.lower())
-            if not translated:
-                translated = f"오프라인 번역: {key}"
-        else:
-            translated = self.ko_to_en.get(key)
-            if not translated:
-                translated = f"Offline translation: {key}"
+        try:
+            import argostranslate.translate as argos_translate  # type: ignore
+        except Exception as exc:  # pragma: no cover - optional dependency
+            raise RuntimeError(
+                "Argos Translate not installed. Install argostranslate and language packages."
+            ) from exc
+
+        try:
+            translated = argos_translate.translate(text, src_lang, dest_lang)
+        except Exception as exc:  # pragma: no cover - optional runtime errors
+            raise RuntimeError("Argos Translate failed. Ensure language packages are installed.") from exc
+
+        if not translated:
+            raise RuntimeError("empty translation from Argos Translate")
+
         return ProviderOutput(translated=translated, provider_name=self.name, raw_info={"offline": True})
 
     def health_check(self) -> Tuple[bool, str]:
-        return True, "ok"
+        try:
+            self.translate("hello", "en", "ko", timeout=3)
+            return True, "ok"
+        except Exception as exc:  # pragma: no cover - optional dependency
+            return False, str(exc)
+
+
+class PlaceholderProvider(TranslationProvider):
+    name = "offline_placeholder"
+
+    def translate(self, text: str, src_lang: str, dest_lang: str, timeout: int = 5) -> ProviderOutput:
+        message = (
+            "Offline translation unavailable. Install Argos Translate language packages for offline support."
+        )
+        return ProviderOutput(translated=message, provider_name=self.name, raw_info={"offline": True})
 
 
 def generate_related(text: str, src_lang: str, dest_lang: str) -> Dict[str, List[str]]:
@@ -267,23 +259,25 @@ def translate_text_with_direction(
 ) -> TranslationResult:
     src_lang, dest_lang = detect_direction(text, direction)
 
+    argos_provider = ArgosProvider()
     deepl_provider = DeepLProvider()
     google_provider = GoogleTransProvider()
     http_provider = HttpFallbackProvider()
-    offline_provider = OfflineProvider()
+    placeholder_provider = PlaceholderProvider()
 
     providers = {
+        "argos": argos_provider,
         "deepl": deepl_provider,
         "googletrans": google_provider,
         "http_fallback": http_provider,
-        "offline": offline_provider,
+        "offline_placeholder": placeholder_provider,
     }
-    order = []
+    order = ["argos"]
     if deepl_provider.is_available():
         order.append("deepl")
     if google_provider.is_available():
         order.append("googletrans")
-    order.extend(["http_fallback", "offline"])
+    order.extend(["http_fallback", "offline_placeholder"])
     if preferred_provider and preferred_provider != "auto" and preferred_provider in providers:
         order = [preferred_provider] + [p for p in order if p != preferred_provider]
 
@@ -309,8 +303,8 @@ def translate_text_with_direction(
 
     if not chosen:
         chosen = ProviderOutput(
-            translated=f"[offline] unable to translate now: {text}",
-            provider_name="offline",
+            translated="Offline translation unavailable. Install Argos Translate language packages for offline support.",
+            provider_name="offline_placeholder",
             raw_info={"fallback": True},
         )
 
@@ -339,7 +333,7 @@ def run_with_timeout(func, timeout: int = 5):
 
 def providers_health():
     deepl = DeepLProvider()
-    providers = [deepl, GoogleTransProvider(), HttpFallbackProvider(), OfflineProvider()]
+    providers = [ArgosProvider(), deepl, GoogleTransProvider(), HttpFallbackProvider(), PlaceholderProvider()]
     status = {}
     for provider in providers:
         ok, message = provider.health_check()
