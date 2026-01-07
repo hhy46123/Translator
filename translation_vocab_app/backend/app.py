@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from db import init_db, seed_sample_data
-from services.translate import translate_text
+from services.translate import providers_health, translate_text
 from services.vocab import (
     create_vocab,
     delete_vocab,
@@ -30,6 +30,7 @@ class TranslateRequest(BaseModel):
     text: str = Field(..., min_length=1)
     note: Optional[str] = "daily"
     save: bool = False
+    provider: Optional[str] = "auto"
 
 
 class VocabCreateRequest(BaseModel):
@@ -64,7 +65,7 @@ app.mount("/assets", StaticFiles(directory=FRONTEND_DIR), name="assets")
 
 @app.post("/api/translate")
 def translate(req: TranslateRequest):
-    result = translate_text(req.text)
+    result = translate_text(req.text, preferred_provider=req.provider)
     if req.save:
         saved = create_vocab(
             english=result.original if result.src_lang.startswith("en") else result.translated,
@@ -87,6 +88,10 @@ def translate(req: TranslateRequest):
         "translated": result.translated,
         "ipa": result.ipa,
         "related": result.related,
+        "provider_used": result.provider_used,
+        "latency_ms": result.latency_ms,
+        "error_chain": result.error_chain,
+        "raw_info": result.raw_info,
         "saved": saved_payload,
     }
 
@@ -102,8 +107,9 @@ def get_notes():
 
 
 @app.get("/api/vocab")
-def get_vocab(note: Optional[str] = None):
-    return {"items": list_vocab(note)}
+def get_vocab(note: Optional[str] = None, offset: int = 0, limit: int = 40):
+    items, total_count = list_vocab(note, offset, limit)
+    return {"items": items, "total_count": total_count}
 
 
 @app.delete("/api/vocab/{item_id}")
@@ -133,3 +139,13 @@ def attempt(item_id: int, req: AttemptRequest):
 def seed():
     seed_sample_data()
     return {"seeded": True}
+
+
+@app.get("/api/health")
+def health():
+    status = providers_health()
+    return {
+        "server_ok": True,
+        "providers": {name: {"ok": info["ok"], "message": info["message"]} for name, info in status.items()},
+        "last_error": None,
+    }

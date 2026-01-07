@@ -49,16 +49,20 @@ def list_notes() -> List[str]:
         return [row["note"] for row in rows]
 
 
-def list_vocab(note: Optional[str] = None) -> List[Dict]:
+def list_vocab(note: Optional[str] = None, offset: int = 0, limit: int = 40) -> tuple[List[Dict], int]:
     with get_connection() as conn:
+        params = []
+        where_clause = ""
         if note:
-            rows = conn.execute(
-                "SELECT * FROM vocab_items WHERE note = ? ORDER BY created_at DESC",
-                (note,),
-            ).fetchall()
-        else:
-            rows = conn.execute("SELECT * FROM vocab_items ORDER BY created_at DESC").fetchall()
-        return [serialize_row(row) for row in rows]
+            where_clause = "WHERE note = ?"
+            params.append(note)
+
+        total = conn.execute(f"SELECT COUNT(*) as c FROM vocab_items {where_clause}", params).fetchone()["c"]
+        rows = conn.execute(
+            f"SELECT * FROM vocab_items {where_clause} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            (*params, limit, offset),
+        ).fetchall()
+        return [serialize_row(row) for row in rows], total
 
 
 def create_vocab(

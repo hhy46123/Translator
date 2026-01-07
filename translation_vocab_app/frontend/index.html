@@ -13,7 +13,10 @@
         <h1>Translation + Vocab Trainer</h1>
         <p>English ↔ Korean • Offline-friendly PWA</p>
       </div>
-      <button id="installBtn" class="ghost-btn">Install App</button>
+      <div class="header-actions">
+        <span id="apiStatus" class="status-pill">Checking...</span>
+        <button id="installBtn" class="ghost-btn">Install App</button>
+      </div>
     </header>
 
     <main>
@@ -38,13 +41,25 @@
                 <input id="newNoteInput" type="text" placeholder="Add new note" />
                 <button id="addNoteBtn" class="ghost-btn">Add note</button>
               </div>
+              <div class="note-row">
+                <label for="providerSelect">Provider:</label>
+                <select id="providerSelect">
+                  <option value="auto">Auto (fallback)</option>
+                  <option value="googletrans">googletrans</option>
+                  <option value="http_fallback">http_fallback</option>
+                  <option value="offline">offline</option>
+                </select>
+              </div>
             </div>
           </div>
         </section>
 
+        <section id="errorBox" class="error-box" hidden></section>
+
         <section class="card" id="resultCard" hidden>
           <h2>Translation</h2>
           <p id="resultLanguages"></p>
+          <p id="providerMeta" class="detail"></p>
           <div class="result-grid">
             <div>
               <h3>Original</h3>
@@ -89,16 +104,23 @@
               <select id="noteFilter"></select>
             </div>
             <button id="refreshBtn" class="ghost-btn">Refresh</button>
-            <div class="page-controls">
-              <button id="prevPage" class="ghost-btn">Prev</button>
-              <span id="pageIndicator">0/0</span>
-              <button id="nextPage" class="ghost-btn">Next</button>
+          </div>
+
+          <div class="book">
+            <div id="leftPage" class="page left-page">
+              <div class="page-number" id="leftPageNumber"></div>
+              <div class="page-content-list" id="leftPageContent"></div>
+            </div>
+            <div class="book-spine"></div>
+            <div id="rightPage" class="page right-page">
+              <div class="page-number" id="rightPageNumber"></div>
+              <div class="page-content-list" id="rightPageContent"></div>
             </div>
           </div>
-          <div id="pageContainer" class="page-container">
-            <div id="pageCard" class="page-card">
-              <div id="pageContent"></div>
-            </div>
+          <div class="book-controls">
+            <button id="prevPage" class="ghost-btn">Prev</button>
+            <span id="pageIndicator">Page 0 / 0</span>
+            <button id="nextPage" class="ghost-btn">Next</button>
           </div>
         </section>
       </section>

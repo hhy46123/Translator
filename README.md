@@ -36,13 +36,15 @@ translation_vocab_app/
 ## Features
 - Translation + enrichment (IPA, related forms, phrases, examples) with pluggable providers and offline-safe fallback.
 - Auto-translate: typing/paste triggers translation after a short debounce (default ~600ms). “Translate” button remains as a manual fallback.
-- Vocabulary notebook with notes/categories (`daily`, `vocab`, or custom), wrong-count tracking, success rate, O/X grading modal, and page-flip navigation.
+- Provider selection + automatic fallback chain (`googletrans` → HTTP fallback → offline dictionary) with latency + provider diagnostics shown in the UI and `/api/health`.
+- Vocabulary notebook with notes/categories (`daily`, `vocab`, or custom), wrong-count tracking, success rate, O/X grading modal, and book-style two-page spreads (20 items per page, 40 per spread) with Prev/Next + arrow-key navigation.
 - SQLite persistence; database file is created automatically on first run. Optional `/api/seed` endpoint seeds sample data.
 - PWA manifest + service worker for offline-friendly usage; “Install app” prompt supported when eligible.
 
 ## UI navigation
 - Bottom navigation toggles between **Translate** and **Notebook** views within the same page.
-- Notebook uses a single-item “page” view with Prev/Next buttons (arrow keys supported) and a page indicator (e.g., 3/40). Page transitions slide horizontally for a book-like feel.
+- Translate view: pick a provider (Auto/googletrans/http_fallback/offline), view provider_used + latency, and see clear error messages when translation fails.
+- Notebook uses a two-page “open book” layout (left/right pages) with a visible spine, page numbers, and a subtle slide animation when flipping pages.
 
 ## API overview
 - `POST /api/translate` – translate and optionally save `{ text, note, save }`.

@@ -5,10 +5,12 @@ const saveToggle = document.getElementById("saveToggle");
 const noteSelect = document.getElementById("noteSelect");
 const newNoteInput = document.getElementById("newNoteInput");
 const addNoteBtn = document.getElementById("addNoteBtn");
+const providerSelect = document.getElementById("providerSelect");
 const noteFilter = document.getElementById("noteFilter");
 const refreshBtn = document.getElementById("refreshBtn");
 const resultCard = document.getElementById("resultCard");
 const resultLanguages = document.getElementById("resultLanguages");
+const providerMeta = document.getElementById("providerMeta");
 const originalTextEl = document.getElementById("originalText");
 const translatedTextEl = document.getElementById("translatedText");
 const ipaTextEl = document.getElementById("ipaText");
@@ -21,22 +23,28 @@ const overlay = document.getElementById("overlay");
 const closeModalBtn = document.getElementById("closeModal");
 const installBtn = document.getElementById("installBtn");
 const navButtons = document.querySelectorAll(".nav-btn");
-const translateView = document.getElementById("translateView");
 const notebookView = document.getElementById("notebookView");
 const pageIndicator = document.getElementById("pageIndicator");
 const prevPage = document.getElementById("prevPage");
 const nextPage = document.getElementById("nextPage");
-const pageContent = document.getElementById("pageContent");
-const pageCard = document.getElementById("pageCard");
+const leftPageContent = document.getElementById("leftPageContent");
+const rightPageContent = document.getElementById("rightPageContent");
+const leftPageNumber = document.getElementById("leftPageNumber");
+const rightPageNumber = document.getElementById("rightPageNumber");
 const detailsOverlay = document.getElementById("detailsOverlay");
 const closeDetails = document.getElementById("closeDetails");
 const detailsContent = document.getElementById("detailsContent");
+const apiStatus = document.getElementById("apiStatus");
+const errorBox = document.getElementById("errorBox");
 
 let pendingInstallEvent = null;
 let activeRowId = null;
 let vocabItems = [];
-let currentIndex = 0;
+let totalCount = 0;
+let currentSpread = 0;
 let debounceTimer = null;
+const SPREAD_SIZE = 40;
+const PAGE_SIZE = 20;
 const AUTO_TRANSLATE_DELAY = 600;
 
 async function fetchJSON(url, options = {}) {
@@ -44,11 +52,28 @@ async function fetchJSON(url, options = {}) {
     headers: { "Content-Type": "application/json" },
     ...options,
   });
-  if (!res.ok) {
-    const detail = await res.text();
-    throw new Error(detail || "Request failed");
+  const text = await res.text();
+  let data = text;
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch (err) {
+    // non-JSON response; keep raw text
   }
-  return res.json();
+  if (!res.ok) {
+    const message = (data && data.detail) || data || "Request failed";
+    throw new Error(message);
+  }
+  return data;
+}
+
+function clearError() {
+  errorBox.hidden = true;
+  errorBox.textContent = "";
+}
+
+function showError(message) {
+  errorBox.hidden = false;
+  errorBox.textContent = message;
 }
 
 function populateList(element, items) {
@@ -68,21 +93,33 @@ async function translate(options = {}) {
     text,
     note,
     save: options.save === undefined ? saveToggle.checked : options.save,
+    provider: providerSelect.value || "auto",
   };
-  const data = await fetchJSON("/api/translate", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
-  renderResult(data);
-  if (data.saved) {
-    await loadNotes();
-    await loadVocab(noteFilter.value || note);
+  clearError();
+  try {
+    const data = await fetchJSON("/api/translate", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    renderResult(data);
+    if (data.saved) {
+      await loadNotes();
+      await loadVocab(noteFilter.value || note, currentSpread);
+    }
+  } catch (err) {
+    showError(err.message || "Translation failed");
   }
 }
 
 function renderResult(data) {
   resultCard.hidden = false;
   resultLanguages.textContent = `${data.src_lang} → ${data.dest_lang}`;
+  providerMeta.textContent = `Provider: ${data.provider_used || "n/a"} · Latency: ${
+    data.latency_ms ?? "—"
+  } ms`;
+  if (data.error_chain && data.error_chain.length) {
+    providerMeta.textContent += ` · Fallbacks: ${data.error_chain.join(" | ")}`;
+  }
   originalTextEl.textContent = data.original;
   translatedTextEl.textContent = data.translated;
   ipaTextEl.textContent = data.ipa;
@@ -113,12 +150,16 @@ async function loadNotes() {
   }
 }
 
-async function loadVocab(note = null) {
-  const params = note ? `?note=${encodeURIComponent(note)}` : "";
-  const { items } = await fetchJSON(`/api/vocab${params}`);
-  vocabItems = items;
-  currentIndex = 0;
-  renderPage();
+async function loadVocab(note = null, spread = 0, direction = null) {
+  const params = new URLSearchParams();
+  if (note) params.append("note", note);
+  params.append("offset", spread * SPREAD_SIZE);
+  params.append("limit", SPREAD_SIZE);
+  const data = await fetchJSON(`/api/vocab?${params.toString()}`);
+  vocabItems = data.items || [];
+  totalCount = data.total_count || 0;
+  currentSpread = spread;
+  renderSpread(direction);
 }
 
 function colorForWrong(count) {
@@ -129,22 +170,21 @@ function colorForWrong(count) {
   return "#22c55e";
 }
 
-async function incrementWrong(id, button) {
+async function incrementWrong(id) {
   const data = await fetchJSON(`/api/vocab/${id}/wrong/increment`, { method: "POST" });
-  button.textContent = data.wrong_count;
-  button.style.background = colorForWrong(data.wrong_count);
   const idx = vocabItems.findIndex((v) => v.id === id);
   if (idx >= 0) {
     vocabItems[idx].wrong_count = data.wrong_count;
   }
+  renderSpread();
 }
 
-async function handleActionClick(event, item) {
-  const action = event.target.dataset.action;
-  if (!action) return;
+async function handleActionClick(action, item) {
   if (action === "delete") {
     await fetchJSON(`/api/vocab/${item.id}`, { method: "DELETE" });
-    await loadVocab(noteFilter.value);
+    const totalPages = Math.max(1, Math.ceil(Math.max(totalCount - 1, 0) / SPREAD_SIZE));
+    const nextSpread = Math.min(currentSpread, totalPages - 1);
+    await loadVocab(noteFilter.value, nextSpread);
   }
   if (action === "details") {
     showDetailsModal(item);
@@ -163,13 +203,13 @@ overlay.querySelectorAll("button[data-result]").forEach((btn) => {
   btn.addEventListener("click", async () => {
     if (!activeRowId) return;
     const result = btn.dataset.result;
-    const data = await fetchJSON(`/api/vocab/${activeRowId}/attempt`, {
+    await fetchJSON(`/api/vocab/${activeRowId}/attempt`, {
       method: "POST",
       body: JSON.stringify({ result }),
     });
     overlay.classList.add("hidden");
     activeRowId = null;
-    await loadVocab(noteFilter.value);
+    await loadVocab(noteFilter.value, currentSpread);
   });
 });
 
@@ -177,16 +217,17 @@ pasteBtn.addEventListener("click", async () => {
   if (!navigator.clipboard) return;
   const text = await navigator.clipboard.readText();
   inputText.value = text;
-  translate();
+  translate({ save: false });
 });
 
-inputText.addEventListener("input", () => {
-  // auto-translate on input changes with small debounce
-  clearTimeout(inputText._timer);
-  inputText._timer = setTimeout(translate, 400);
-});
+function debounceTranslate() {
+  clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(() => translate({ save: false }), AUTO_TRANSLATE_DELAY);
+}
 
-translateBtn.addEventListener("click", translate);
+inputText.addEventListener("input", debounceTranslate);
+
+translateBtn.addEventListener("click", () => translate());
 
 addNoteBtn.addEventListener("click", async () => {
   const newNote = newNoteInput.value.trim();
@@ -200,8 +241,8 @@ addNoteBtn.addEventListener("click", async () => {
   noteFilter.value = newNote;
 });
 
-noteFilter.addEventListener("change", () => loadVocab(noteFilter.value));
-refreshBtn.addEventListener("click", () => loadVocab(noteFilter.value));
+noteFilter.addEventListener("change", () => loadVocab(noteFilter.value, 0));
+refreshBtn.addEventListener("click", () => loadVocab(noteFilter.value, currentSpread));
 
 window.addEventListener("beforeinstallprompt", (e) => {
   e.preventDefault();
@@ -216,38 +257,74 @@ installBtn.addEventListener("click", async () => {
   pendingInstallEvent = null;
 });
 
-async function init() {
-  try {
-    await loadNotes();
-    noteFilter.value = "daily";
-    await loadVocab("daily");
-  } catch (err) {
-    console.error(err);
+function renderSpread(direction = null) {
+  const book = document.querySelector(".book");
+  if (direction === "next") {
+    book.classList.add("page-turn-next");
+    setTimeout(() => book.classList.remove("page-turn-next"), 400);
+  } else if (direction === "prev") {
+    book.classList.add("page-turn-prev");
+    setTimeout(() => book.classList.remove("page-turn-prev"), 400);
   }
+
+  const totalPages = Math.max(1, Math.ceil(totalCount / SPREAD_SIZE));
+  const currentPageNumber = Math.min(currentSpread + 1, totalPages);
+  pageIndicator.textContent = `Page ${currentPageNumber} / ${totalPages}`;
+
+  const leftItems = vocabItems.slice(0, PAGE_SIZE);
+  const rightItems = vocabItems.slice(PAGE_SIZE, SPREAD_SIZE);
+
+  renderPageContent(leftPageContent, leftItems, leftPageNumber, currentSpread * SPREAD_SIZE + 1);
+  renderPageContent(
+    rightPageContent,
+    rightItems,
+    rightPageNumber,
+    currentSpread * SPREAD_SIZE + PAGE_SIZE + 1
+  );
 }
 
-init();
-
-function renderPage(direction = null) {
-  pageIndicator.textContent = vocabItems.length
-    ? `${currentIndex + 1}/${vocabItems.length}`
-    : "0/0";
-  pageContent.innerHTML = "";
-  if (!vocabItems.length) {
-    pageContent.innerHTML = "<p class='detail'>No items yet.</p>";
+function renderPageContent(container, items, pageNumberEl, startIndex) {
+  container.innerHTML = "";
+  if (!items.length) {
+    const empty = document.createElement("p");
+    empty.className = "detail";
+    empty.textContent = "No items on this page yet.";
+    container.appendChild(empty);
+    pageNumberEl.textContent = "";
     return;
   }
-  const item = vocabItems[currentIndex];
+  items.forEach((item) => {
+    const row = buildPageItem(item);
+    container.appendChild(row);
+  });
+  pageNumberEl.textContent = startIndex;
+}
+
+function buildPageItem(item) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "page-item";
+
+  const header = document.createElement("div");
+  header.className = "page-item-header";
+  const title = document.createElement("span");
+  title.textContent = item.english;
+
   const wrongBtn = document.createElement("button");
   wrongBtn.textContent = item.wrong_count;
   wrongBtn.className = "wrong-btn";
   wrongBtn.style.background = colorForWrong(item.wrong_count);
-  wrongBtn.addEventListener("click", () => incrementWrong(item.id, wrongBtn));
+  wrongBtn.addEventListener("click", () => incrementWrong(item.id));
+
+  header.appendChild(title);
+  header.appendChild(wrongBtn);
+
+  const body = document.createElement("div");
+  body.className = "page-item-body";
 
   const cover = document.createElement("div");
   cover.className = "cover";
   const meaning = document.createElement("div");
-  meaning.className = "meaning page-meaning";
+  meaning.className = "meaning";
   meaning.textContent = item.korean;
 
   cover.addEventListener("click", () => {
@@ -257,66 +334,43 @@ function renderPage(direction = null) {
     overlay.classList.remove("hidden");
   });
 
-  const header = document.createElement("div");
-  header.className = "page-content-header";
-  header.innerHTML = `<h3>${item.english}</h3>`;
-  header.appendChild(wrongBtn);
-
-  const meta = document.createElement("div");
-  meta.className = "page-meta";
-  const success = document.createElement("span");
-  success.className = "chip";
-  success.textContent = `Success: ${item.success_rate}%`;
-  const noteTag = document.createElement("span");
-  noteTag.className = "chip";
-  noteTag.textContent = `Note: ${item.note}`;
-  meta.appendChild(success);
-  meta.appendChild(noteTag);
+  const success = document.createElement("div");
+  success.className = "detail";
+  success.textContent = `Success: ${item.success_rate}% | Note: ${item.note}`;
 
   const actions = document.createElement("div");
   actions.className = "btn-row";
   const detailsBtn = document.createElement("button");
   detailsBtn.className = "ghost-btn";
   detailsBtn.textContent = "Details";
-  detailsBtn.dataset.action = "details";
-  detailsBtn.addEventListener("click", (e) => handleActionClick(e, item));
+  detailsBtn.addEventListener("click", () => handleActionClick("details", item));
   const deleteBtn = document.createElement("button");
   deleteBtn.className = "ghost-btn";
   deleteBtn.textContent = "Delete";
-  deleteBtn.dataset.action = "delete";
-  deleteBtn.addEventListener("click", (e) => handleActionClick(e, item));
+  deleteBtn.addEventListener("click", () => handleActionClick("delete", item));
   actions.appendChild(detailsBtn);
   actions.appendChild(deleteBtn);
 
-  pageContent.appendChild(header);
-  pageContent.appendChild(meta);
-  pageContent.appendChild(cover);
-  pageContent.appendChild(meaning);
-  pageContent.appendChild(actions);
+  body.appendChild(cover);
+  body.appendChild(meaning);
+  body.appendChild(success);
+  body.appendChild(actions);
 
-  if (direction === "left") {
-    pageCard.classList.add("slide-left");
-    requestAnimationFrame(() => {
-      pageCard.classList.remove("slide-left");
-    });
-  } else if (direction === "right") {
-    pageCard.classList.add("slide-right");
-    requestAnimationFrame(() => {
-      pageCard.classList.remove("slide-right");
-    });
-  }
+  wrapper.appendChild(header);
+  wrapper.appendChild(body);
+  return wrapper;
 }
 
 prevPage.addEventListener("click", () => {
-  if (!vocabItems.length) return;
-  currentIndex = (currentIndex - 1 + vocabItems.length) % vocabItems.length;
-  renderPage("left");
+  const totalPages = Math.max(1, Math.ceil(totalCount / SPREAD_SIZE));
+  currentSpread = (currentSpread - 1 + totalPages) % totalPages;
+  loadVocab(noteFilter.value, currentSpread, "prev");
 });
 
 nextPage.addEventListener("click", () => {
-  if (!vocabItems.length) return;
-  currentIndex = (currentIndex + 1) % vocabItems.length;
-  renderPage("right");
+  const totalPages = Math.max(1, Math.ceil(totalCount / SPREAD_SIZE));
+  currentSpread = (currentSpread + 1) % totalPages;
+  loadVocab(noteFilter.value, currentSpread, "next");
 });
 
 document.addEventListener("keydown", (e) => {
@@ -368,11 +422,30 @@ detailsOverlay.addEventListener("click", (e) => {
   if (e.target === detailsOverlay) detailsOverlay.classList.add("hidden");
 });
 
-function debounceTranslate() {
-  clearTimeout(debounceTimer);
-  debounceTimer = setTimeout(() => {
-    translate({ save: false });
-  }, AUTO_TRANSLATE_DELAY);
+async function loadHealth() {
+  try {
+    const data = await fetchJSON("/api/health");
+    const providerStatuses = data.providers || {};
+    const allOk = Object.values(providerStatuses).every((p) => p.ok);
+    apiStatus.textContent = allOk ? "API OK" : "API Degraded";
+    apiStatus.style.background = allOk ? "#dcfce7" : "#fef3c7";
+    apiStatus.style.color = allOk ? "#166534" : "#92400e";
+  } catch (err) {
+    apiStatus.textContent = "API FAIL";
+    apiStatus.style.background = "#fee2e2";
+    apiStatus.style.color = "#7f1d1d";
+  }
 }
 
-inputText.addEventListener("input", debounceTranslate);
+async function init() {
+  try {
+    await loadNotes();
+    noteFilter.value = "daily";
+    await loadVocab("daily", 0);
+    await loadHealth();
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+init();
