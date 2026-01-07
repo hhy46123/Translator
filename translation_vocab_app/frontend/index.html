@@ -45,6 +45,7 @@
                 <label for="providerSelect">Provider:</label>
                 <select id="providerSelect">
                   <option value="auto">Auto (fallback)</option>
+                  <option value="local_nmt">local_nmt</option>
                   <option value="localdict">localdict</option>
                   <option value="offline_placeholder">offline_placeholder</option>
                 </select>
@@ -107,8 +108,16 @@
         <section class="card">
           <div class="list-header">
             <div class="note-filter">
-              <label for="noteFilter">Notebook:</label>
-              <select id="noteFilter"></select>
+              <label for="searchInput">Search:</label>
+              <input id="searchInput" type="text" placeholder="Search notebook" />
+            </div>
+            <div class="note-filter">
+              <label for="directionFilter">Direction:</label>
+              <select id="directionFilter">
+                <option value="all">All</option>
+                <option value="en_ko">EN → KO</option>
+                <option value="ko_en">KO → EN</option>
+              </select>
             </div>
             <button id="refreshBtn" class="ghost-btn">Refresh</button>
           </div>

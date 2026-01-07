@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
@@ -9,6 +10,12 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from db import init_db, seed_sample_data
+from services.notebook import (
+    delete_entry,
+    init_notebook_db,
+    list_notebook,
+    upsert_entry,
+)
 from services.translate import providers_health, translate_text
 from services.vocab import (
     create_vocab,
@@ -49,6 +56,7 @@ class AttemptRequest(BaseModel):
 @app.on_event("startup")
 def startup_event():
     init_db()
+    init_notebook_db()
 
 
 @app.get("/")
@@ -67,6 +75,23 @@ app.mount("/assets", StaticFiles(directory=FRONTEND_DIR), name="assets")
 @app.post("/api/translate")
 def translate(req: TranslateRequest):
     result = translate_text(req.text, preferred_provider=req.provider, direction=req.direction or "auto")
+    translation_success, save_reason = evaluate_translation_success(result)
+    save_attempted = False
+    notebook_saved = False
+    saved_entry = None
+    if translation_success:
+        save_attempted = True
+        saved_entry = upsert_entry(
+            src_lang=result.src_lang,
+            dest_lang=result.dest_lang,
+            original=result.original,
+            translated=result.translated,
+            provider_used=result.provider_used,
+            note=req.note,
+        )
+        notebook_saved = True
+        save_reason = "success"
+
     if req.save:
         saved = create_vocab(
             english=result.original if result.src_lang.startswith("en") else result.translated,
@@ -93,7 +118,12 @@ def translate(req: TranslateRequest):
         "latency_ms": result.latency_ms,
         "error_chain": result.error_chain,
         "raw_info": result.raw_info,
-        "saved": saved_payload,
+        "saved": notebook_saved,
+        "saved_vocab": saved_payload,
+        "translation_success": translation_success,
+        "save_attempted": save_attempted,
+        "saved_entry": saved_entry,
+        "save_reason": save_reason,
     }
 
 
@@ -150,8 +180,85 @@ def health():
         "providers": {
             name: {"ok": info["ok"], "message": info["message"]}
             for name, info in status.items()
-            if name != "deepl_key_present"
+            if name not in {"local_nmt_ready", "local_nmt_dir", "missing_models", "instructions"}
         },
-        "deepl_key_present": status.get("deepl_key_present", False),
+        "local_nmt_ready": status.get("local_nmt_ready", False),
+        "local_nmt_dir": status.get("local_nmt_dir", ""),
+        "missing_models": status.get("missing_models", []),
+        "instructions": status.get("instructions", ""),
         "last_error": None,
     }
+
+
+@app.get("/api/notebook")
+def notebook(
+    page: int = 1,
+    page_size: int = 40,
+    query: Optional[str] = None,
+    direction: str = "all",
+):
+    items, total = list_notebook(page=page, page_size=page_size, query=query, direction=direction)
+    return {"items": items, "total_count": total}
+
+
+@app.delete("/api/notebook/{entry_id}")
+def delete_notebook_entry(entry_id: int):
+    delete_entry(entry_id)
+    return {"deleted": entry_id}
+
+
+def evaluate_translation_success(result) -> tuple[bool, str]:
+    provider_allowed = {"local_nmt", "localdict", "deepl", "argos"}
+    if result.provider_used not in provider_allowed:
+        for err in result.error_chain:
+            if "localdict miss" in err:
+                return False, "miss_localdict"
+            if "local_nmt not ready" in err:
+                return False, "local_nmt_not_ready"
+        if "local_nmt_not_ready" in result.translated:
+            return False, "local_nmt_not_ready"
+        return False, "provider_error"
+    if not result.translated:
+        return False, "provider_error"
+    placeholder_prefixes = ("오프라인 번역:", "[offline]")
+    if result.translated.strip().startswith(placeholder_prefixes) or "local_nmt_not_ready" in result.translated:
+        return False, "placeholder"
+
+    normalized_original = normalize_text(result.original, result.src_lang)
+    normalized_translated = normalize_text(result.translated, result.dest_lang)
+    if normalized_original == normalized_translated:
+        if result.src_lang != result.dest_lang:
+            if result.dest_lang == "ko" and contains_korean(result.translated):
+                return True, "success"
+            if result.dest_lang == "en" and contains_latin(result.translated):
+                return True, "success"
+        return False, "echo_original"
+
+    for err in result.error_chain:
+        lowered = err.lower()
+        if "ssl" in lowered or "certificate" in lowered or "network" in lowered or "unavailable" in lowered:
+            return False, "provider_error"
+
+    if result.provider_used == "localdict":
+        hits = 0
+        if isinstance(result.raw_info, dict):
+            hits = result.raw_info.get("hits", 0)
+        if hits == 0:
+            return False, "miss_localdict"
+
+    return True, "success"
+
+
+def normalize_text(text: str, lang: str) -> str:
+    normalized = re.sub(r"\s+", " ", text.strip())
+    if lang == "en":
+        return normalized.lower()
+    return normalized
+
+
+def contains_korean(text: str) -> bool:
+    return bool(re.search("[\uac00-\ud7af]", text))
+
+
+def contains_latin(text: str) -> bool:
+    return bool(re.search("[a-zA-Z]", text))

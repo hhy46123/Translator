@@ -10,7 +10,7 @@ translation_vocab_app/
     db.py             # SQLite helpers + initializer
     models.sql        # DB schema
     services/
-      translate.py    # Pluggable translation provider (DeepL + offline fallback)
+      translate.py    # Pluggable translation provider (local_nmt + localdict)
       vocab.py        # Vocabulary CRUD + scoring helpers
     requirements.txt
   frontend/
@@ -35,17 +35,17 @@ translation_vocab_app/
 6) To run backend tests: `pytest`
 
 ## Features
-- Translation + enrichment (IPA, related forms, phrases, examples) with pluggable providers and offline-safe fallback.
+- Translation + enrichment (IPA, related forms, phrases, examples) with offline-first providers.
 - Auto-translate: typing/paste triggers translation after a short debounce (default ~600ms). “Translate” button remains as a manual fallback.
-- Provider selection + automatic fallback chain (`localdict` → placeholder) with latency + provider diagnostics shown in the UI and `/api/health`.
+- Provider selection + automatic fallback chain (`local_nmt` → `localdict` → placeholder) with latency + provider diagnostics shown in the UI and `/api/health`.
 - Direction selector: force EN→KO, KO→EN, or Auto detection (Korean characters → KO source; Latin letters → EN source).
-- Vocabulary notebook with notes/categories (`daily`, `vocab`, or custom), wrong-count tracking, success rate, O/X grading modal, and book-style two-page spreads (20 items per page, 40 per spread) with Prev/Next + arrow-key navigation.
+- Notebook auto-saves successful translations into a dedicated SQLite database, with search + direction filters and book-style pagination.
 - SQLite persistence; database file is created automatically on first run. Optional `/api/seed` endpoint seeds sample data.
 - PWA manifest + service worker for offline-friendly usage; “Install app” prompt supported when eligible.
 
 ## UI navigation
 - Bottom navigation toggles between **Translate** and **Notebook** views within the same page.
-- Translate view: pick a provider (Auto/localdict/placeholder), view provider_used + latency, and see clear error messages when translation fails.
+- Translate view: pick a provider (Auto/local_nmt/localdict/placeholder), view provider_used + latency, and see clear error messages when translation fails.
 - Notebook uses a two-page “open book” layout (left/right pages) with a visible spine, page numbers, and a subtle slide animation when flipping pages.
 
 ## API overview
@@ -57,6 +57,8 @@ translation_vocab_app/
 - `POST /api/vocab/{id}/wrong/increment` – increment wrong count (color-coded).
 - `POST /api/vocab/{id}/wrong/reset` – reset wrong count.
 - `POST /api/vocab/{id}/attempt` – record O/X attempt and success rate.
+- `GET /api/notebook` – list auto-saved translations with pagination and filters.
+- `DELETE /api/notebook/{id}` – remove a notebook entry.
 
 ## Clipboard behavior
 Browsers cannot watch the clipboard continuously. The UI provides a **Paste** button plus auto-translate on input/paste events (and Ctrl+V where supported).
@@ -75,3 +77,25 @@ Local dictionary files live in `translation_vocab_app/backend/services/dictionar
 ```
 
 The server caches dictionaries but reloads automatically if the files change timestamps. Restart the server if you replace the files entirely to ensure a clean reload.
+
+## Local NMT models (offline)
+Set `LOCAL_NMT_DIR` to a directory containing pre-downloaded models:
+- `{LOCAL_NMT_DIR}/en_ko/` (model + tokenizer files)
+- `{LOCAL_NMT_DIR}/ko_en/` (model + tokenizer files)
+
+Example:
+```
+export LOCAL_NMT_DIR=/models/marian
+```
+
+The health endpoint reports readiness and missing model paths.
+
+## Notebook auto-save
+Each `/api/translate` call evaluates `translation_success`. Successful translations are upserted into
+`backend/data/notebook.sqlite` keyed by `(src_lang, dest_lang, original_normalized)`. If the same
+entry repeats, the `count` and `last_seen_at` are updated.
+
+Success rules (summary):
+- provider_used must be `local_nmt` or `localdict` (with dictionary hits)
+- translation must be non-empty and not a placeholder
+- translated must differ from normalized original (unless target script is detected)

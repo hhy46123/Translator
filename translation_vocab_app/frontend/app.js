@@ -7,7 +7,8 @@ const newNoteInput = document.getElementById("newNoteInput");
 const addNoteBtn = document.getElementById("addNoteBtn");
 const providerSelect = document.getElementById("providerSelect");
 const directionSelect = document.getElementById("directionSelect");
-const noteFilter = document.getElementById("noteFilter");
+const searchInput = document.getElementById("searchInput");
+const directionFilter = document.getElementById("directionFilter");
 const refreshBtn = document.getElementById("refreshBtn");
 const resultCard = document.getElementById("resultCard");
 const resultLanguages = document.getElementById("resultLanguages");
@@ -40,9 +41,9 @@ const errorBox = document.getElementById("errorBox");
 
 let pendingInstallEvent = null;
 let activeRowId = null;
-let vocabItems = [];
+let notebookItems = [];
 let totalCount = 0;
-let currentSpread = 0;
+let currentPage = 0;
 let debounceTimer = null;
 const SPREAD_SIZE = 40;
 const PAGE_SIZE = 20;
@@ -104,9 +105,8 @@ async function translate(options = {}) {
       body: JSON.stringify(payload),
     });
     renderResult(data);
-    if (data.saved) {
-      await loadNotes();
-      await loadVocab(noteFilter.value || note, currentSpread);
+    if (data.translation_success) {
+      await loadNotebook(0);
     }
   } catch (err) {
     showError(err.message || "Translation failed");
@@ -134,7 +134,7 @@ function renderResult(data) {
 
 async function loadNotes() {
   const { notes } = await fetchJSON("/api/notes");
-  const targets = [noteSelect, noteFilter];
+  const targets = [noteSelect];
   targets.forEach((select) => {
     select.innerHTML = "";
     notes.forEach((n) => {
@@ -152,15 +152,20 @@ async function loadNotes() {
   }
 }
 
-async function loadVocab(note = null, spread = 0, direction = null) {
+async function loadNotebook(page = 0, direction = null) {
   const params = new URLSearchParams();
-  if (note) params.append("note", note);
-  params.append("offset", spread * SPREAD_SIZE);
-  params.append("limit", SPREAD_SIZE);
-  const data = await fetchJSON(`/api/vocab?${params.toString()}`);
-  vocabItems = data.items || [];
+  params.append("page", String(page + 1));
+  params.append("page_size", String(SPREAD_SIZE));
+  if (searchInput.value.trim()) {
+    params.append("query", searchInput.value.trim());
+  }
+  if (directionFilter.value) {
+    params.append("direction", directionFilter.value);
+  }
+  const data = await fetchJSON(`/api/notebook?${params.toString()}`);
+  notebookItems = data.items || [];
   totalCount = data.total_count || 0;
-  currentSpread = spread;
+  currentPage = page;
   renderSpread(direction);
 }
 
@@ -172,25 +177,11 @@ function colorForWrong(count) {
   return "#22c55e";
 }
 
-async function incrementWrong(id) {
-  const data = await fetchJSON(`/api/vocab/${id}/wrong/increment`, { method: "POST" });
-  const idx = vocabItems.findIndex((v) => v.id === id);
-  if (idx >= 0) {
-    vocabItems[idx].wrong_count = data.wrong_count;
-  }
-  renderSpread();
-}
-
-async function handleActionClick(action, item) {
-  if (action === "delete") {
-    await fetchJSON(`/api/vocab/${item.id}`, { method: "DELETE" });
-    const totalPages = Math.max(1, Math.ceil(Math.max(totalCount - 1, 0) / SPREAD_SIZE));
-    const nextSpread = Math.min(currentSpread, totalPages - 1);
-    await loadVocab(noteFilter.value, nextSpread);
-  }
-  if (action === "details") {
-    showDetailsModal(item);
-  }
+async function handleNotebookDelete(item) {
+  await fetchJSON(`/api/notebook/${item.id}`, { method: "DELETE" });
+  const totalPages = Math.max(1, Math.ceil(Math.max(totalCount - 1, 0) / SPREAD_SIZE));
+  const nextPage = Math.min(currentPage, totalPages - 1);
+  await loadNotebook(nextPage);
 }
 
 overlay.addEventListener("click", (e) => {
@@ -211,7 +202,7 @@ overlay.querySelectorAll("button[data-result]").forEach((btn) => {
     });
     overlay.classList.add("hidden");
     activeRowId = null;
-    await loadVocab(noteFilter.value, currentSpread);
+    await loadNotebook(currentPage);
   });
 });
 
@@ -237,14 +228,13 @@ addNoteBtn.addEventListener("click", async () => {
   const { notes } = await fetchJSON("/api/notes");
   if (!notes.includes(newNote)) {
     noteSelect.appendChild(new Option(newNote, newNote));
-    noteFilter.appendChild(new Option(newNote, newNote));
   }
   noteSelect.value = newNote;
-  noteFilter.value = newNote;
 });
 
-noteFilter.addEventListener("change", () => loadVocab(noteFilter.value, 0));
-refreshBtn.addEventListener("click", () => loadVocab(noteFilter.value, currentSpread));
+refreshBtn.addEventListener("click", () => loadNotebook(currentPage));
+searchInput.addEventListener("input", () => loadNotebook(0));
+directionFilter.addEventListener("change", () => loadNotebook(0));
 
 window.addEventListener("beforeinstallprompt", (e) => {
   e.preventDefault();
@@ -270,18 +260,18 @@ function renderSpread(direction = null) {
   }
 
   const totalPages = Math.max(1, Math.ceil(totalCount / SPREAD_SIZE));
-  const currentPageNumber = Math.min(currentSpread + 1, totalPages);
+  const currentPageNumber = Math.min(currentPage + 1, totalPages);
   pageIndicator.textContent = `Page ${currentPageNumber} / ${totalPages}`;
 
-  const leftItems = vocabItems.slice(0, PAGE_SIZE);
-  const rightItems = vocabItems.slice(PAGE_SIZE, SPREAD_SIZE);
+  const leftItems = notebookItems.slice(0, PAGE_SIZE);
+  const rightItems = notebookItems.slice(PAGE_SIZE, SPREAD_SIZE);
 
-  renderPageContent(leftPageContent, leftItems, leftPageNumber, currentSpread * SPREAD_SIZE + 1);
+  renderPageContent(leftPageContent, leftItems, leftPageNumber, currentPage * SPREAD_SIZE + 1);
   renderPageContent(
     rightPageContent,
     rightItems,
     rightPageNumber,
-    currentSpread * SPREAD_SIZE + PAGE_SIZE + 1
+    currentPage * SPREAD_SIZE + PAGE_SIZE + 1
   );
 }
 
@@ -309,53 +299,40 @@ function buildPageItem(item) {
   const header = document.createElement("div");
   header.className = "page-item-header";
   const title = document.createElement("span");
-  title.textContent = item.english;
-
-  const wrongBtn = document.createElement("button");
-  wrongBtn.textContent = item.wrong_count;
-  wrongBtn.className = "wrong-btn";
-  wrongBtn.style.background = colorForWrong(item.wrong_count);
-  wrongBtn.addEventListener("click", () => incrementWrong(item.id));
+  title.textContent = `${item.original} → ${item.translated}`;
 
   header.appendChild(title);
-  header.appendChild(wrongBtn);
 
   const body = document.createElement("div");
   body.className = "page-item-body";
 
-  const cover = document.createElement("div");
-  cover.className = "cover";
-  const meaning = document.createElement("div");
-  meaning.className = "meaning";
-  meaning.textContent = item.korean;
+  const direction = document.createElement("div");
+  direction.className = "detail";
+  direction.textContent = `Direction: ${item.src_lang} → ${item.dest_lang}`;
 
-  cover.addEventListener("click", () => {
-    cover.style.display = "none";
-    meaning.style.display = "block";
-    activeRowId = item.id;
-    overlay.classList.remove("hidden");
-  });
+  const timestamp = document.createElement("div");
+  timestamp.className = "detail";
+  timestamp.textContent = `Last seen: ${item.last_seen_at}`;
 
-  const success = document.createElement("div");
-  success.className = "detail";
-  success.textContent = `Success: ${item.success_rate}% | Note: ${item.note}`;
+  const count = document.createElement("div");
+  count.className = "detail";
+  if (item.count && item.count > 1) {
+    count.textContent = `Count: ${item.count}`;
+  }
 
   const actions = document.createElement("div");
   actions.className = "btn-row";
-  const detailsBtn = document.createElement("button");
-  detailsBtn.className = "ghost-btn";
-  detailsBtn.textContent = "Details";
-  detailsBtn.addEventListener("click", () => handleActionClick("details", item));
   const deleteBtn = document.createElement("button");
   deleteBtn.className = "ghost-btn";
   deleteBtn.textContent = "Delete";
-  deleteBtn.addEventListener("click", () => handleActionClick("delete", item));
-  actions.appendChild(detailsBtn);
+  deleteBtn.addEventListener("click", () => handleNotebookDelete(item));
   actions.appendChild(deleteBtn);
 
-  body.appendChild(cover);
-  body.appendChild(meaning);
-  body.appendChild(success);
+  body.appendChild(direction);
+  body.appendChild(timestamp);
+  if (count.textContent) {
+    body.appendChild(count);
+  }
   body.appendChild(actions);
 
   wrapper.appendChild(header);
@@ -365,14 +342,14 @@ function buildPageItem(item) {
 
 prevPage.addEventListener("click", () => {
   const totalPages = Math.max(1, Math.ceil(totalCount / SPREAD_SIZE));
-  currentSpread = (currentSpread - 1 + totalPages) % totalPages;
-  loadVocab(noteFilter.value, currentSpread, "prev");
+  currentPage = (currentPage - 1 + totalPages) % totalPages;
+  loadNotebook(currentPage, "prev");
 });
 
 nextPage.addEventListener("click", () => {
   const totalPages = Math.max(1, Math.ceil(totalCount / SPREAD_SIZE));
-  currentSpread = (currentSpread + 1) % totalPages;
-  loadVocab(noteFilter.value, currentSpread, "next");
+  currentPage = (currentPage + 1) % totalPages;
+  loadNotebook(currentPage, "next");
 });
 
 document.addEventListener("keydown", (e) => {
@@ -442,8 +419,7 @@ async function loadHealth() {
 async function init() {
   try {
     await loadNotes();
-    noteFilter.value = "daily";
-    await loadVocab("daily", 0);
+    await loadNotebook(0);
     await loadHealth();
   } catch (err) {
     console.error(err);

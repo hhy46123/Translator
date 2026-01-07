@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 
 
+
 def _contains_korean(text: str) -> bool:
     return bool(re.search("[\uac00-\ud7af]", text))
 
@@ -84,6 +85,8 @@ class LocalDictProvider(TranslationProvider):
             translated, hits, misses = translate_ko_to_en(text, ko_en)
         if not translated:
             raise RuntimeError("empty translation from localdict")
+        if hits == 0:
+            raise RuntimeError("localdict miss")
         return ProviderOutput(
             translated=translated,
             provider_name=self.name,
@@ -118,6 +121,70 @@ class LocalDictProvider(TranslationProvider):
             self._ko_en_cache = data
             self._ko_en_mtime = mtime
         return data
+
+
+class LocalNmtProvider(TranslationProvider):
+    name = "local_nmt"
+
+    def __init__(self) -> None:
+        self.base_dir = os.getenv("LOCAL_NMT_DIR")
+        self._ready = False
+        self._missing: list[str] = []
+        self._models: dict[str, tuple[AutoTokenizer, AutoModelForSeq2SeqLM]] = {}
+        self._load_models()
+
+    def _load_models(self) -> None:
+        self._missing = []
+        if not self.base_dir:
+            self._missing = ["LOCAL_NMT_DIR not set"]
+            self._ready = False
+            return
+        en_ko_path = Path(self.base_dir) / "en_ko"
+        ko_en_path = Path(self.base_dir) / "ko_en"
+        if not en_ko_path.exists():
+            self._missing.append(str(en_ko_path))
+        if not ko_en_path.exists():
+            self._missing.append(str(ko_en_path))
+        if self._missing:
+            self._ready = False
+            return
+        try:
+            from transformers import AutoModelForSeq2SeqLM, AutoTokenizer  # type: ignore
+            self._models["en_ko"] = (
+                AutoTokenizer.from_pretrained(str(en_ko_path)),
+                AutoModelForSeq2SeqLM.from_pretrained(str(en_ko_path)),
+            )
+            self._models["ko_en"] = (
+                AutoTokenizer.from_pretrained(str(ko_en_path)),
+                AutoModelForSeq2SeqLM.from_pretrained(str(ko_en_path)),
+            )
+            self._ready = True
+        except Exception as exc:  # pragma: no cover - model load failures
+            self._missing = [f"Failed to load models: {exc}"]
+            self._ready = False
+
+    def is_ready(self) -> bool:
+        return self._ready
+
+    def missing_models(self) -> list[str]:
+        return self._missing
+
+    def translate(self, text: str, src_lang: str, dest_lang: str, timeout: int = 5) -> ProviderOutput:
+        if not self._ready:
+            raise RuntimeError("local_nmt not ready")
+        key = "en_ko" if src_lang == "en" else "ko_en"
+        tokenizer, model = self._models[key]
+        inputs = tokenizer(text, return_tensors="pt")
+        try:
+            import torch  # type: ignore
+        except Exception as exc:  # pragma: no cover - optional dependency
+            raise RuntimeError("torch is required for local_nmt") from exc
+        with torch.no_grad():
+            outputs = model.generate(**inputs, max_length=256)
+        translated = tokenizer.batch_decode(outputs, skip_special_tokens=True)[0]
+        if not translated:
+            raise RuntimeError("empty translation from local_nmt")
+        return ProviderOutput(translated=translated, provider_name=self.name, raw_info={"offline": True})
 
 
 class PlaceholderProvider(TranslationProvider):
@@ -177,14 +244,16 @@ def translate_text_with_direction(
 ) -> TranslationResult:
     src_lang, dest_lang = detect_direction(text, direction)
 
+    local_nmt_provider = LocalNmtProvider()
     local_provider = LocalDictProvider()
     placeholder_provider = PlaceholderProvider()
 
     providers = {
+        "local_nmt": local_nmt_provider,
         "localdict": local_provider,
         "offline_placeholder": placeholder_provider,
     }
-    order = ["localdict", "offline_placeholder"]
+    order = ["local_nmt", "localdict", "offline_placeholder"]
     if preferred_provider and preferred_provider != "auto" and preferred_provider in providers:
         order = [preferred_provider] + [p for p in order if p != preferred_provider]
 
@@ -210,7 +279,7 @@ def translate_text_with_direction(
 
     if not chosen:
         chosen = ProviderOutput(
-            translated="Offline translation unavailable. Update dictionary files for local translations.",
+            translated="ERROR: local_nmt_not_ready",
             provider_name="offline_placeholder",
             raw_info={"fallback": True},
         )
@@ -221,6 +290,8 @@ def translate_text_with_direction(
     if chosen.provider_name == "localdict" and isinstance(chosen.raw_info, dict):
         error_chain.append("localdict used")
         error_chain.append(f"hits: {chosen.raw_info.get('hits', 0)}, misses: {chosen.raw_info.get('misses', 0)}")
+    if chosen.provider_name == "local_nmt":
+        error_chain.append("local_nmt used")
 
     return TranslationResult(
         src_lang=src_lang,
@@ -243,11 +314,16 @@ def run_with_timeout(func, timeout: int = 5):
 
 
 def providers_health():
-    providers = [LocalDictProvider(), PlaceholderProvider()]
+    local_nmt = LocalNmtProvider()
+    providers = [local_nmt, LocalDictProvider(), PlaceholderProvider()]
     status = {}
     for provider in providers:
         ok, message = provider.health_check()
         status[provider.name] = {"ok": ok, "message": message}
+    status["local_nmt_ready"] = local_nmt.is_ready()
+    status["local_nmt_dir"] = local_nmt.base_dir or ""
+    status["missing_models"] = local_nmt.missing_models()
+    status["instructions"] = "Place models in {LOCAL_NMT_DIR}/en_ko and {LOCAL_NMT_DIR}/ko_en."
     return status
 
 
