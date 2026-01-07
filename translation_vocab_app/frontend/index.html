@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Translation + Vocabulary Notebook</title>
+    <link rel="manifest" href="/pwa/manifest.json" />
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body>
+    <header>
+      <div>
+        <h1>Translation + Vocab Trainer</h1>
+        <p>English ↔ Korean • Offline-friendly PWA</p>
+      </div>
+      <div class="header-actions">
+        <span id="apiStatus" class="status-pill">Checking...</span>
+        <button id="installBtn" class="ghost-btn">Install App</button>
+      </div>
+    </header>
+
+    <main>
+      <section id="translateView" class="view active">
+        <section class="card">
+          <div class="input-row">
+            <textarea id="inputText" placeholder="Type or paste text to translate"></textarea>
+            <div class="controls">
+              <div class="btn-row">
+                <button id="pasteBtn">Paste</button>
+                <button id="translateBtn" class="primary">Translate</button>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="saveToggle" checked />
+                <span>Save to note</span>
+              </label>
+              <div class="note-row">
+                <select id="noteSelect">
+                  <option value="daily">daily</option>
+                  <option value="vocab">vocab</option>
+                </select>
+                <input id="newNoteInput" type="text" placeholder="Add new note" />
+                <button id="addNoteBtn" class="ghost-btn">Add note</button>
+              </div>
+              <div class="note-row">
+                <label for="providerSelect">Provider:</label>
+                <select id="providerSelect">
+                  <option value="auto">Auto (fallback)</option>
+                  <option value="argos">argos</option>
+                  <option value="localdict">localdict</option>
+                  <option value="offline_placeholder">offline_placeholder</option>
+                </select>
+              </div>
+              <div class="note-row">
+                <label for="directionSelect">Direction:</label>
+                <select id="directionSelect">
+                  <option value="auto">Auto detect</option>
+                  <option value="en_to_ko">EN → KO</option>
+                  <option value="ko_to_en">KO → EN</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="errorBox" class="error-box" hidden></section>
+
+        <section class="card" id="resultCard" hidden>
+          <h2>Translation</h2>
+          <p id="resultLanguages"></p>
+          <p id="providerMeta" class="detail"></p>
+          <div class="result-grid">
+            <div>
+              <h3>Original</h3>
+              <p id="originalText"></p>
+            </div>
+            <div>
+              <h3>Translated</h3>
+              <p id="translatedText"></p>
+              <p class="ipa" id="ipaText"></p>
+            </div>
+          </div>
+          <div class="related">
+            <div>
+              <h4>Noun forms</h4>
+              <ul id="nounForms"></ul>
+            </div>
+            <div>
+              <h4>Verb forms</h4>
+              <ul id="verbForms"></ul>
+            </div>
+            <div>
+              <h4>Adjective forms</h4>
+              <ul id="adjForms"></ul>
+            </div>
+            <div>
+              <h4>Phrases / Idioms</h4>
+              <ul id="phrases"></ul>
+            </div>
+            <div class="full-span">
+              <h4>Examples</h4>
+              <ul id="examples"></ul>
+            </div>
+          </div>
+        </section>
+      </section>
+
+      <section id="notebookView" class="view">
+        <section class="card">
+          <div class="list-header">
+            <div class="note-filter">
+              <label for="searchInput">Search:</label>
+              <input id="searchInput" type="text" placeholder="Search notebook" />
+            </div>
+            <div class="note-filter">
+              <label for="directionFilter">Direction:</label>
+              <select id="directionFilter">
+                <option value="all">All</option>
+                <option value="en_ko">EN → KO</option>
+                <option value="ko_en">KO → EN</option>
+              </select>
+            </div>
+            <button id="refreshBtn" class="ghost-btn">Refresh</button>
+          </div>
+
+          <div class="book">
+            <div id="leftPage" class="page left-page">
+              <div class="page-number" id="leftPageNumber"></div>
+              <div class="page-content-list" id="leftPageContent"></div>
+            </div>
+            <div class="book-spine"></div>
+            <div id="rightPage" class="page right-page">
+              <div class="page-number" id="rightPageNumber"></div>
+              <div class="page-content-list" id="rightPageContent"></div>
+            </div>
+          </div>
+          <div class="book-controls">
+            <button id="prevPage" class="ghost-btn">Prev</button>
+            <span id="pageIndicator">Page 0 / 0</span>
+            <button id="nextPage" class="ghost-btn">Next</button>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <nav class="bottom-nav">
+      <button data-target="translateView" class="nav-btn active">Translate</button>
+      <button data-target="notebookView" class="nav-btn">Notebook</button>
+    </nav>
+
+    <div id="overlay" class="overlay hidden">
+      <div class="modal">
+        <h3>Did you get it correct?</h3>
+        <div class="modal-actions">
+          <button data-result="O" class="primary">O</button>
+          <button data-result="X">X</button>
+        </div>
+        <button id="closeModal" class="ghost-btn">Cancel</button>
+      </div>
+    </div>
+
+    <div id="detailsOverlay" class="overlay hidden">
+      <div class="modal large">
+        <h3>Details</h3>
+        <div id="detailsContent"></div>
+        <button id="closeDetails" class="ghost-btn">Close</button>
+      </div>
+    </div>
+
+    <script src="/assets/app.js"></script>
+    <script>
+      if ("serviceWorker" in navigator) {
+        window.addEventListener("load", () => {
+          navigator.serviceWorker.register("/pwa/service-worker.js");
+        });
+      }
+    </script>
+  </body>
+</html>
