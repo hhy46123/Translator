@@ -10,6 +10,7 @@ from typing import Dict, List, Optional, Tuple
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 def _contains_korean(text: str) -> bool:
@@ -67,24 +68,21 @@ class CliProvider(TranslationProvider):
     name = "cli"
 
     def __init__(self) -> None:
-        self.cli_path = os.getenv("TRANSLATE_CLI_PATH")
+        self.cli_path = Path(__file__).resolve().parents[1] / "tools" / "translator_cli.py"
 
     def is_ready(self) -> bool:
-        return bool(self.cli_path and Path(self.cli_path).exists())
+        return self.cli_path.exists()
 
     def translate(self, text: str, src_lang: str, dest_lang: str, timeout: int = 10) -> ProviderOutput:
-        if not self.cli_path:
-            raise RuntimeError("TRANSLATE_CLI_PATH not set")
-        cli_path = Path(self.cli_path)
-        if not cli_path.exists():
-            raise RuntimeError(f"TRANSLATE_CLI_PATH not found: {self.cli_path}")
+        if not self.cli_path.exists():
+            raise RuntimeError(f"translator_cli not found: {self.cli_path}")
 
         if len(text) > 5000:
             raise RuntimeError("input too long (max 5000 chars)")
 
         try:
             result = subprocess.run(
-                [str(cli_path), "--src", src_lang, "--dest", dest_lang, "--text", text],
+                [sys.executable, str(self.cli_path), "--src", src_lang, "--dest", dest_lang, "--text", text],
                 capture_output=True,
                 text=True,
                 timeout=timeout,
@@ -99,20 +97,11 @@ class CliProvider(TranslationProvider):
             stderr = (result.stderr or "").strip()
             raise RuntimeError(f"cli failed: {stderr or 'non-zero exit'}")
 
-        try:
-            payload = json.loads(result.stdout.strip())
-        except Exception as exc:
-            raise RuntimeError(f"cli returned invalid JSON: {exc}") from exc
-
-        translated = payload.get("translated")
+        translated = (result.stdout or "").strip()
         if not translated:
             raise RuntimeError("cli returned empty translation")
 
-        raw_info = {
-            "engine": payload.get("engine"),
-            "provider_used": payload.get("provider_used"),
-        }
-        return ProviderOutput(translated=translated, provider_name=self.name, raw_info=raw_info)
+        return ProviderOutput(translated=translated, provider_name=self.name, raw_info={"engine": "argos"})
 
 
 class LocalDictProvider(TranslationProvider):
@@ -306,7 +295,7 @@ def providers_health():
         ok, message = provider.health_check()
         status[provider.name] = {"ok": ok, "message": message}
     status["cli_ready"] = cli_provider.is_ready()
-    status["cli_path_detected"] = cli_provider.cli_path or ""
+    status["cli_path_detected"] = str(cli_provider.cli_path)
     return status
 
 

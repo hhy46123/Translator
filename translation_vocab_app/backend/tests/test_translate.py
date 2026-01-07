@@ -23,14 +23,15 @@ def test_localdict_ko_to_en():
 
 
 def test_cli_en_to_ko(monkeypatch, tmp_path):
-    cli_path = tmp_path / "translator"
+    cli_path = tmp_path / "translator_cli.py"
     cli_path.write_text("", encoding="utf-8")
-    monkeypatch.setenv("TRANSLATE_CLI_PATH", str(cli_path))
+    monkeypatch.setattr("services.translate.CliProvider.is_ready", lambda self: True)
+    monkeypatch.setattr("services.translate.CliProvider.__init__", lambda self: setattr(self, "cli_path", cli_path))
 
     class FakeCompleted:
         def __init__(self):
             self.returncode = 0
-            self.stdout = '{"translated": "초대", "provider_used": "cli", "engine": "argos"}'
+            self.stdout = "초대"
             self.stderr = ""
 
     monkeypatch.setattr("services.translate.subprocess.run", lambda *args, **kwargs: FakeCompleted())
@@ -40,14 +41,15 @@ def test_cli_en_to_ko(monkeypatch, tmp_path):
 
 
 def test_cli_ko_to_en(monkeypatch, tmp_path):
-    cli_path = tmp_path / "translator"
+    cli_path = tmp_path / "translator_cli.py"
     cli_path.write_text("", encoding="utf-8")
-    monkeypatch.setenv("TRANSLATE_CLI_PATH", str(cli_path))
+    monkeypatch.setattr("services.translate.CliProvider.is_ready", lambda self: True)
+    monkeypatch.setattr("services.translate.CliProvider.__init__", lambda self: setattr(self, "cli_path", cli_path))
 
     class FakeCompleted:
         def __init__(self):
             self.returncode = 0
-            self.stdout = '{"translated": "hello", "provider_used": "cli", "engine": "argos"}'
+            self.stdout = "hello"
             self.stderr = ""
 
     monkeypatch.setattr("services.translate.subprocess.run", lambda *args, **kwargs: FakeCompleted())

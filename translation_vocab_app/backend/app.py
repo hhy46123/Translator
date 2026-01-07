@@ -212,7 +212,7 @@ def evaluate_translation_success(result) -> tuple[bool, str]:
             lowered = err.lower()
             if "localdict miss" in lowered:
                 return False, "miss_localdict"
-            if "translate_cli_path" in lowered or "cli" in lowered:
+            if "translator_cli not found" in lowered or "cli" in lowered:
                 return False, "provider_error"
         return False, "provider_error"
     if not result.translated:
@@ -224,11 +224,6 @@ def evaluate_translation_success(result) -> tuple[bool, str]:
     normalized_original = normalize_text(result.original, result.src_lang)
     normalized_translated = normalize_text(result.translated, result.dest_lang)
     if normalized_original == normalized_translated:
-        if result.src_lang != result.dest_lang:
-            if result.dest_lang == "ko" and contains_korean(result.translated):
-                return True, "success"
-            if result.dest_lang == "en" and contains_latin(result.translated):
-                return True, "success"
         return False, "echo_original"
 
     for err in result.error_chain:
