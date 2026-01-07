@@ -1,6 +1,4 @@
 fastapi
 uvicorn
 pytest
-torch
-transformers
-sentencepiece
+argostranslate

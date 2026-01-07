@@ -180,12 +180,9 @@ def health():
         "providers": {
             name: {"ok": info["ok"], "message": info["message"]}
             for name, info in status.items()
-            if name not in {"local_nmt_ready", "local_nmt_dir", "missing_models", "instructions"}
+            if name not in {"argos_models_dir"}
         },
-        "local_nmt_ready": status.get("local_nmt_ready", False),
-        "local_nmt_dir": status.get("local_nmt_dir", ""),
-        "missing_models": status.get("missing_models", []),
-        "instructions": status.get("instructions", ""),
+        "argos_models_dir": status.get("argos_models_dir", ""),
         "last_error": None,
     }
 
@@ -208,20 +205,19 @@ def delete_notebook_entry(entry_id: int):
 
 
 def evaluate_translation_success(result) -> tuple[bool, str]:
-    provider_allowed = {"local_nmt", "localdict", "deepl", "argos"}
+    provider_allowed = {"argos", "localdict"}
     if result.provider_used not in provider_allowed:
         for err in result.error_chain:
-            if "localdict miss" in err:
+            lowered = err.lower()
+            if "localdict miss" in lowered:
                 return False, "miss_localdict"
-            if "local_nmt not ready" in err:
-                return False, "local_nmt_not_ready"
-        if "local_nmt_not_ready" in result.translated:
-            return False, "local_nmt_not_ready"
+            if "argos models" in lowered or "argos translate not installed" in lowered:
+                return False, "provider_error"
         return False, "provider_error"
     if not result.translated:
         return False, "provider_error"
     placeholder_prefixes = ("오프라인 번역:", "[offline]")
-    if result.translated.strip().startswith(placeholder_prefixes) or "local_nmt_not_ready" in result.translated:
+    if result.translated.strip().startswith(placeholder_prefixes):
         return False, "placeholder"
 
     normalized_original = normalize_text(result.original, result.src_lang)
