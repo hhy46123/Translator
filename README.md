@@ -10,7 +10,7 @@ translation_vocab_app/
     db.py             # SQLite helpers + initializer
     models.sql        # DB schema
     services/
-      translate.py    # Pluggable translation provider (googletrans + fallback)
+      translate.py    # Pluggable translation provider (DeepL + offline fallback)
       vocab.py        # Vocabulary CRUD + scoring helpers
     requirements.txt
   frontend/
@@ -20,8 +20,8 @@ translation_vocab_app/
     pwa/
       manifest.json
       service-worker.js
-      icon-192.png
-      icon-512.png
+      icon-192.txt
+      icon-512.txt
 ```
 
 ## Run instructions
@@ -34,10 +34,15 @@ translation_vocab_app/
 5) Open http://localhost:8000 in your browser. The backend serves the frontend directly, so CORS is not required.
 6) To run backend tests: `pytest`
 
+## DeepL configuration
+Set environment variables before running the server:
+- `DEEPL_API_KEY` (required for online translation)
+- `DEEPL_API_URL` (optional, default: `https://api-free.deepl.com/v2/translate`)
+
 ## Features
 - Translation + enrichment (IPA, related forms, phrases, examples) with pluggable providers and offline-safe fallback.
 - Auto-translate: typing/paste triggers translation after a short debounce (default ~600ms). “Translate” button remains as a manual fallback.
-- Provider selection + automatic fallback chain (`googletrans` → HTTP fallback → offline dictionary) with latency + provider diagnostics shown in the UI and `/api/health`.
+- Provider selection + automatic fallback chain (`deepl` → offline dictionary) with latency + provider diagnostics shown in the UI and `/api/health`.
 - Direction selector: force EN→KO, KO→EN, or Auto detection (Korean characters → KO source; Latin letters → EN source).
 - Vocabulary notebook with notes/categories (`daily`, `vocab`, or custom), wrong-count tracking, success rate, O/X grading modal, and book-style two-page spreads (20 items per page, 40 per spread) with Prev/Next + arrow-key navigation.
 - SQLite persistence; database file is created automatically on first run. Optional `/api/seed` endpoint seeds sample data.
@@ -45,7 +50,7 @@ translation_vocab_app/
 
 ## UI navigation
 - Bottom navigation toggles between **Translate** and **Notebook** views within the same page.
-- Translate view: pick a provider (Auto/googletrans/http_fallback/offline), view provider_used + latency, and see clear error messages when translation fails.
+- Translate view: pick a provider (Auto/deepl/offline), view provider_used + latency, and see clear error messages when translation fails.
 - Notebook uses a two-page “open book” layout (left/right pages) with a visible spine, page numbers, and a subtle slide animation when flipping pages.
 
 ## API overview
