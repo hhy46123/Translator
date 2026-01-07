@@ -3,15 +3,29 @@ from __future__ import annotations
 import random
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
-import requests
+import json
+from urllib.parse import urlencode
+from urllib.request import urlopen, Request
 
 
 def _contains_korean(text: str) -> bool:
     return bool(re.search("[\uac00-\ud7af]", text))
+
+
+def detect_direction(text: str, direction: str = "auto") -> tuple[str, str]:
+    """Determine src/dest based on requested direction or content."""
+    if direction == "en_to_ko":
+        return "en", "ko"
+    if direction == "ko_to_en":
+        return "ko", "en"
+    # auto
+    if _contains_korean(text):
+        return "ko", "en"
+    return "en", "ko"
 
 
 @dataclass
@@ -85,9 +99,10 @@ class HttpFallbackProvider(TranslationProvider):
 
     def translate(self, text: str, src_lang: str, dest_lang: str, timeout: int = 5) -> ProviderOutput:
         params = {"q": text, "langpair": f"{src_lang}|{dest_lang}"}
-        resp = requests.get(self.ENDPOINT, params=params, timeout=timeout)
-        resp.raise_for_status()
-        data = resp.json()
+        query = urlencode(params)
+        req = Request(f"{self.ENDPOINT}?{query}")
+        with urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
         translated = data.get("responseData", {}).get("translatedText")
         if not translated:
             raise RuntimeError("empty translation from http fallback")
@@ -102,23 +117,43 @@ class OfflineProvider(TranslationProvider):
     name = "offline"
 
     def __init__(self) -> None:
-        self.dictionary = {
+        self.en_to_ko = {
             "hello": "안녕하세요",
-            "thank you": "감사합니다",
+            "hi": "안녕",
+            "love": "사랑",
+            "apple": "사과",
+            "water": "물",
             "study": "공부하다",
             "food": "음식",
-            "water": "물",
-            "안녕하세요": "hello",
-            "고마워요": "thank you",
-            "사랑": "love",
-            "책": "book",
+            "book": "책",
         }
+        self.ko_to_en = {v: k for k, v in self.en_to_ko.items()}
+        # extend manual pairs
+        self.ko_to_en.update(
+            {
+                "사랑": "love",
+                "안녕하세요": "hello",
+                "안녕": "hi",
+                "고마워요": "thank you",
+                "감사합니다": "thank you",
+                "물": "water",
+                "사과": "apple",
+                "공부하다": "study",
+                "음식": "food",
+                "책": "book",
+            }
+        )
 
     def translate(self, text: str, src_lang: str, dest_lang: str, timeout: int = 5) -> ProviderOutput:
-        key = text.strip().lower()
-        translated = self.dictionary.get(key)
-        if not translated:
-            translated = f"[offline] cannot translate offline: {text}"
+        key = text.strip()
+        if src_lang.startswith("en"):
+            translated = self.en_to_ko.get(key.lower())
+            if not translated:
+                translated = f"오프라인 번역: {key}"
+        else:
+            translated = self.ko_to_en.get(key)
+            if not translated:
+                translated = f"Offline translation: {key}"
         return ProviderOutput(translated=translated, provider_name=self.name, raw_info={"offline": True})
 
     def health_check(self) -> Tuple[bool, str]:
@@ -165,9 +200,14 @@ def generate_ipa(text: str, lang: str) -> str:
     return f"[en] /{phonetic}/"
 
 
-def translate_text(text: str, preferred_provider: Optional[str] = "auto") -> TranslationResult:
-    src_lang = "ko" if _contains_korean(text) else "en"
-    dest_lang = "en" if src_lang == "ko" else "ko"
+def translate_text(text: str, preferred_provider: Optional[str] = "auto", direction: str = "auto") -> TranslationResult:
+    return translate_text_with_direction(text=text, preferred_provider=preferred_provider, direction=direction)
+
+
+def translate_text_with_direction(
+    text: str, preferred_provider: Optional[str] = "auto", direction: str = "auto"
+) -> TranslationResult:
+    src_lang, dest_lang = detect_direction(text, direction)
 
     providers = {
         "googletrans": GoogleTransProvider(),

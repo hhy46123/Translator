@@ -6,6 +6,7 @@ const noteSelect = document.getElementById("noteSelect");
 const newNoteInput = document.getElementById("newNoteInput");
 const addNoteBtn = document.getElementById("addNoteBtn");
 const providerSelect = document.getElementById("providerSelect");
+const directionSelect = document.getElementById("directionSelect");
 const noteFilter = document.getElementById("noteFilter");
 const refreshBtn = document.getElementById("refreshBtn");
 const resultCard = document.getElementById("resultCard");
@@ -94,6 +95,7 @@ async function translate(options = {}) {
     note,
     save: options.save === undefined ? saveToggle.checked : options.save,
     provider: providerSelect.value || "auto",
+    direction: directionSelect.value || "auto",
   };
   clearError();
   try {

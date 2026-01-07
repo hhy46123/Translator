@@ -31,6 +31,7 @@ class TranslateRequest(BaseModel):
     note: Optional[str] = "daily"
     save: bool = False
     provider: Optional[str] = "auto"
+    direction: Optional[str] = "auto"
 
 
 class VocabCreateRequest(BaseModel):
@@ -65,7 +66,7 @@ app.mount("/assets", StaticFiles(directory=FRONTEND_DIR), name="assets")
 
 @app.post("/api/translate")
 def translate(req: TranslateRequest):
-    result = translate_text(req.text, preferred_provider=req.provider)
+    result = translate_text(req.text, preferred_provider=req.provider, direction=req.direction or "auto")
     if req.save:
         saved = create_vocab(
             english=result.original if result.src_lang.startswith("en") else result.translated,

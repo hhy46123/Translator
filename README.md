@@ -32,11 +32,13 @@ translation_vocab_app/
 3) Install dependencies: `pip install -r requirements.txt`  
 4) Start the server: `uvicorn app:app --port 8000`  
 5) Open http://localhost:8000 in your browser. The backend serves the frontend directly, so CORS is not required.
+6) To run backend tests: `pytest`
 
 ## Features
 - Translation + enrichment (IPA, related forms, phrases, examples) with pluggable providers and offline-safe fallback.
 - Auto-translate: typing/paste triggers translation after a short debounce (default ~600ms). “Translate” button remains as a manual fallback.
 - Provider selection + automatic fallback chain (`googletrans` → HTTP fallback → offline dictionary) with latency + provider diagnostics shown in the UI and `/api/health`.
+- Direction selector: force EN→KO, KO→EN, or Auto detection (Korean characters → KO source; Latin letters → EN source).
 - Vocabulary notebook with notes/categories (`daily`, `vocab`, or custom), wrong-count tracking, success rate, O/X grading modal, and book-style two-page spreads (20 items per page, 40 per spread) with Prev/Next + arrow-key navigation.
 - SQLite persistence; database file is created automatically on first run. Optional `/api/seed` endpoint seeds sample data.
 - PWA manifest + service worker for offline-friendly usage; “Install app” prompt supported when eligible.
