@@ -10,7 +10,7 @@ translation_vocab_app/
     db.py             # SQLite helpers + initializer
     models.sql        # DB schema
     services/
-      translate.py    # Pluggable translation provider (local_nmt + localdict)
+      translate.py    # Translation provider (Argos CLI + offline dictionary)
       vocab.py        # Vocabulary CRUD + scoring helpers
     requirements.txt
   frontend/
@@ -35,9 +35,9 @@ translation_vocab_app/
 6) To run backend tests: `pytest`
 
 ## Features
-- Translation + enrichment (IPA, related forms, phrases, examples) using a local translation CLI with a dictionary fallback.
+- Offline translation using a local Argos CLI plus an offline dictionary index built from the Korean Basic Dictionary zip.
 - Auto-translate: typing/paste triggers translation after a short debounce (default ~600ms). “Translate” button remains as a manual fallback.
-- Provider selection + automatic fallback chain (`cli` → `localdict`) with latency + provider diagnostics shown in the UI and `/api/health`.
+- Provider selection + automatic fallback chain (`argos` → `offline`) with latency + provider diagnostics shown in the UI and `/api/health`.
 - Direction selector: force EN→KO, KO→EN, or Auto detection (Korean characters → KO source; Latin letters → EN source).
 - Notebook auto-saves successful translations into a dedicated SQLite database, with search + direction filters and book-style pagination.
 - SQLite persistence; database file is created automatically on first run. Optional `/api/seed` endpoint seeds sample data.
@@ -45,7 +45,7 @@ translation_vocab_app/
 
 ## UI navigation
 - Bottom navigation toggles between **Translate** and **Notebook** views within the same page.
-- Translate view: pick a provider (Auto/cli/localdict/placeholder), view provider_used + latency, and see clear error messages when translation fails.
+- Translate view: pick a provider (Auto/argos/offline), view provider_used + latency, and see clear error messages when translation fails.
 - Notebook uses a two-page “open book” layout (left/right pages) with a visible spine, page numbers, and a subtle slide animation when flipping pages.
 
 ## API overview
@@ -63,37 +63,32 @@ translation_vocab_app/
 ## Clipboard behavior
 Browsers cannot watch the clipboard continuously. The UI provides a **Paste** button plus auto-translate on input/paste events (and Ctrl+V where supported).
 
-## Dictionary files
-Local dictionary files live in `translation_vocab_app/backend/services/dictionaries/`:
-- `en_ko.json` for English → Korean
-- `ko_en.json` for Korean → English
+## Offline dictionary setup (required)
+The backend reads the Korean Basic Dictionary JSON zip and builds a local SQLite index for fast offline lookups.
 
-**Format**
-```json
-{
-  "hello": "안녕하세요",
-  "invite": "초대"
-}
+**PowerShell setup**
+```powershell
+$env:OFFLINE_DICT_ZIP_PATH="C:\\path\\to\\korean_basic_dictionary.zip"
+$env:OFFLINE_ONLY=1
 ```
 
-The server caches dictionaries but reloads automatically if the files change timestamps. Restart the server if you replace the files entirely to ensure a clean reload.
-
-## Local translation CLI
-Set `TRANSLATE_CLI_PATH` to the local CLI executable:
-- Windows (PowerShell): `$env:TRANSLATE_CLI_PATH="C:\\Path\\To\\translator.exe"`
-- macOS/Linux: `export TRANSLATE_CLI_PATH=/path/to/translator`
-
-The CLI must accept:
+If `OFFLINE_DICT_ZIP_PATH` is not set, the backend auto-searches:
 ```
-<TRANSLATE_CLI_PATH> --src <src_lang> --dest <dest_lang> --text "<text>"
+backend/data/
+data/
+current working directory
+~/Downloads
+~/Documents
 ```
 
-And output JSON like:
-```json
-{"translated": "...", "provider_used": "cli", "engine": "argos"}
-```
+The cache is stored at `translation_vocab_app/backend/data/cache/offline_dict.sqlite` and is rebuilt only when the zip changes.
 
-See `tools/dummy_translate_cli.py` for a local dev stub.
+## Local Argos CLI
+The backend runs the bundled Argos CLI script:
+```
+python translation_vocab_app/backend/tools/translator_cli.py en ko "Hello world"
+```
+It prints only the translated string to stdout.
 
 ## Notebook auto-save
 Each `/api/translate` call evaluates `translation_success`. Successful translations are upserted into
@@ -101,6 +96,18 @@ Each `/api/translate` call evaluates `translation_success`. Successful translati
 entry repeats, the `count` and `last_seen_at` are updated.
 
 Success rules (summary):
-- provider_used must be `local_nmt` or `localdict` (with dictionary hits)
-- translation must be non-empty and not a placeholder
-- translated must differ from normalized original (unless target script is detected)
+- translation must be non-empty
+- translated must differ from the original (after trimming)
+
+## Example calls
+```bash
+curl -X POST http://localhost:8000/api/translate \\
+  -H "Content-Type: application/json" \\
+  -d '{"text":"가장자리","direction":"ko_to_en","provider":"offline"}'
+```
+
+```bash
+curl -X POST http://localhost:8000/api/translate \\
+  -H "Content-Type: application/json" \\
+  -d '{"text":"edge","direction":"en_to_ko","provider":"offline"}'
+```

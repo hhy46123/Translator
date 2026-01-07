@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import random
 import re
 import time
@@ -10,6 +11,8 @@ from typing import Dict, List, Optional, Tuple
 import subprocess
 import sys
 from pathlib import Path
+
+from offline_dict import lookup_en, lookup_ko
 
 def _contains_korean(text: str) -> bool:
     return bool(re.search("[\uac00-\ud7af]", text))
@@ -45,6 +48,7 @@ class TranslationResult:
     provider_used: str
     error_chain: List[str]
     latency_ms: float
+    results: List[dict]
     raw_info: Optional[dict] = None
 
 
@@ -102,6 +106,23 @@ class CliProvider(TranslationProvider):
         return ProviderOutput(translated=translated, provider_name=self.name, raw_info={"engine": "argos"})
 
 
+class OfflineProvider(TranslationProvider):
+    name = "offline"
+
+    def translate(self, text: str, src_lang: str, dest_lang: str, timeout: int = 5) -> ProviderOutput:
+        if src_lang == "ko":
+            results = lookup_ko(text)
+            translated = ", ".join(results[0]["en"]) if results else ""
+        else:
+            results = lookup_en(text)
+            translated = ", ".join([entry["ko"] for entry in results]) if results else ""
+        return ProviderOutput(
+            translated=translated,
+            provider_name=self.name,
+            raw_info={"results": results},
+        )
+
+
 def generate_related(text: str, src_lang: str, dest_lang: str) -> Dict[str, List[str]]:
     base = text.split()
     root = base[0] if base else text
@@ -152,14 +173,21 @@ def translate_text_with_direction(
     src_lang, dest_lang = detect_direction(text, direction)
 
     cli_provider = CliProvider()
+    offline_provider = OfflineProvider()
 
-    providers = {"argos": cli_provider}
-    order = ["argos"]
+    providers = {"argos": cli_provider, "offline": offline_provider}
+    order = ["argos", "offline"]
     normalized_preference = preferred_provider
     if preferred_provider == "cli":
         normalized_preference = "argos"
-    if normalized_preference and normalized_preference != "auto" and normalized_preference in providers:
-        order = [normalized_preference]
+    if os.getenv("OFFLINE_ONLY") == "1":
+        normalized_preference = "offline"
+        order = ["offline"]
+    elif normalized_preference and normalized_preference != "auto" and normalized_preference in providers:
+        if normalized_preference == "offline":
+            order = ["offline"]
+        else:
+            order = [normalized_preference] + [p for p in order if p != normalized_preference]
 
     error_chain: List[str] = []
     chosen: Optional[ProviderOutput] = None
@@ -193,6 +221,12 @@ def translate_text_with_direction(
 
     if chosen.provider_name == "argos":
         error_chain.append("argos used")
+    if chosen.provider_name == "offline":
+        error_chain.append("offline used")
+
+    results = []
+    if isinstance(chosen.raw_info, dict):
+        results = chosen.raw_info.get("results", [])
 
     return TranslationResult(
         src_lang=src_lang,
@@ -204,6 +238,7 @@ def translate_text_with_direction(
         provider_used=chosen.provider_name,
         error_chain=error_chain,
         latency_ms=round(latency_ms, 2),
+        results=results,
         raw_info=chosen.raw_info,
     )
 
@@ -216,7 +251,7 @@ def run_with_timeout(func, timeout: int = 5):
 
 def providers_health():
     cli_provider = CliProvider()
-    providers = [cli_provider]
+    providers = [cli_provider, OfflineProvider()]
     status = {}
     for provider in providers:
         ok, message = provider.health_check()
