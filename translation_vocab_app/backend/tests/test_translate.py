@@ -18,6 +18,12 @@ class FakeResponse:
     def read(self):
         return json.dumps(self.payload).encode("utf-8")
 
+    def json(self):
+        return self.payload
+
+    def raise_for_status(self):
+        return None
+
     def __enter__(self):
         return self
 
@@ -46,7 +52,7 @@ def test_sarang_ko_to_en_offline():
 def test_deepl_en_to_ko(monkeypatch):
     monkeypatch.setenv("DEEPL_API_KEY", "test-key")
     payload = {"translations": [{"text": "사랑"}]}
-    monkeypatch.setattr("services.translate.urlopen", Mock(return_value=FakeResponse(payload)))
+    monkeypatch.setattr("services.translate.requests.post", Mock(return_value=FakeResponse(payload)))
     result = translate_text("love", preferred_provider="deepl", direction="en_to_ko")
     assert result.provider_used == "deepl"
     assert "사랑" in result.translated
@@ -55,7 +61,7 @@ def test_deepl_en_to_ko(monkeypatch):
 def test_deepl_ko_to_en(monkeypatch):
     monkeypatch.setenv("DEEPL_API_KEY", "test-key")
     payload = {"translations": [{"text": "love"}]}
-    monkeypatch.setattr("services.translate.urlopen", Mock(return_value=FakeResponse(payload)))
+    monkeypatch.setattr("services.translate.requests.post", Mock(return_value=FakeResponse(payload)))
     result = translate_text("사랑", preferred_provider="deepl", direction="ko_to_en")
     assert result.provider_used == "deepl"
     assert "love" in result.translated.lower()

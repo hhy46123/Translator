@@ -9,8 +9,9 @@ from typing import Dict, List, Optional, Tuple
 
 import json
 import os
-from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+
+import certifi
+import requests
 
 
 def _contains_korean(text: str) -> bool:
@@ -78,18 +79,20 @@ class DeepLProvider(TranslationProvider):
         if not self.api_key:
             raise RuntimeError("DEEPL_API_KEY is not set")
 
-        payload = urlencode(
-            {
-                "auth_key": self.api_key,
-                "text": text,
-                "source_lang": src_lang.upper(),
-                "target_lang": dest_lang.upper(),
-            }
-        ).encode("utf-8")
-        req = Request(self.api_url, data=payload)
-        req.add_header("Content-Type", "application/x-www-form-urlencoded")
-        with urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+        payload = {
+            "auth_key": self.api_key,
+            "text": text,
+            "source_lang": src_lang.upper(),
+            "target_lang": dest_lang.upper(),
+        }
+        resp = requests.post(
+            self.api_url,
+            data=payload,
+            timeout=10,
+            verify=certifi.where(),
+        )
+        resp.raise_for_status()
+        data = resp.json()
 
         translated = None
         if isinstance(data, dict):
@@ -150,10 +153,14 @@ class HttpFallbackProvider(TranslationProvider):
 
     def translate(self, text: str, src_lang: str, dest_lang: str, timeout: int = 5) -> ProviderOutput:
         params = {"q": text, "langpair": f"{src_lang}|{dest_lang}"}
-        query = urlencode(params)
-        req = Request(f"{self.ENDPOINT}?{query}")
-        with urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+        resp = requests.get(
+            self.ENDPOINT,
+            params=params,
+            timeout=10,
+            verify=certifi.where(),
+        )
+        resp.raise_for_status()
+        data = resp.json()
         translated = data.get("responseData", {}).get("translatedText")
         if not translated:
             raise RuntimeError("empty translation from http fallback")
