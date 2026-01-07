@@ -9,6 +9,7 @@ from typing import Dict, List, Optional, Tuple
 
 import json
 import os
+import subprocess
 from pathlib import Path
 
 def _contains_korean(text: str) -> bool:
@@ -62,43 +63,56 @@ class TranslationProvider:
             return False, str(exc)
 
 
-class ArgosProvider(TranslationProvider):
-    name = "argos"
+class CliProvider(TranslationProvider):
+    name = "cli"
 
     def __init__(self) -> None:
-        self.models_dir = os.getenv("ARGOS_MODELS_DIR")
+        self.cli_path = os.getenv("TRANSLATE_CLI_PATH")
 
-    def translate(self, text: str, src_lang: str, dest_lang: str, timeout: int = 5) -> ProviderOutput:
+    def is_ready(self) -> bool:
+        return bool(self.cli_path and Path(self.cli_path).exists())
+
+    def translate(self, text: str, src_lang: str, dest_lang: str, timeout: int = 10) -> ProviderOutput:
+        if not self.cli_path:
+            raise RuntimeError("TRANSLATE_CLI_PATH not set")
+        cli_path = Path(self.cli_path)
+        if not cli_path.exists():
+            raise RuntimeError(f"TRANSLATE_CLI_PATH not found: {self.cli_path}")
+
+        if len(text) > 5000:
+            raise RuntimeError("input too long (max 5000 chars)")
+
         try:
-            import argostranslate.package as argos_package  # type: ignore
-            import argostranslate.settings as argos_settings  # type: ignore
-            import argostranslate.translate as argos_translate  # type: ignore
-        except Exception as exc:  # pragma: no cover - optional dependency
-            raise RuntimeError("Argos Translate not installed") from exc
-
-        try:
-            argos_package.update_package_index()
-        except Exception:  # pragma: no cover - network blocked
-            pass
-
-        installed = argos_package.get_installed_packages()
-        if not installed:
-            model_dir = Path(self.models_dir) if self.models_dir else None
-            if model_dir and model_dir.exists():
-                for model_path in model_dir.glob("*.argosmodel"):
-                    argos_package.install_from_path(str(model_path))
-                installed = argos_package.get_installed_packages()
-
-        if not installed:
-            package_path = argos_settings.get_package_path()
-            raise RuntimeError(
-                f"Argos models not installed. Place .argosmodel files in {self.models_dir or package_path}."
+            result = subprocess.run(
+                [str(cli_path), "--src", src_lang, "--dest", dest_lang, "--text", text],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
             )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError("cli timeout") from exc
+        except Exception as exc:  # pragma: no cover - unexpected
+            raise RuntimeError(f"cli execution failed: {exc}") from exc
 
-        translated = argos_translate.translate(text, src_lang, dest_lang)
+        if result.returncode != 0:
+            stderr = (result.stderr or "").strip()
+            raise RuntimeError(f"cli failed: {stderr or 'non-zero exit'}")
+
+        try:
+            payload = json.loads(result.stdout.strip())
+        except Exception as exc:
+            raise RuntimeError(f"cli returned invalid JSON: {exc}") from exc
+
+        translated = payload.get("translated")
         if not translated:
-            raise RuntimeError("empty translation from argos")
-        return ProviderOutput(translated=translated, provider_name=self.name, raw_info={"offline": True})
+            raise RuntimeError("cli returned empty translation")
+
+        raw_info = {
+            "engine": payload.get("engine"),
+            "provider_used": payload.get("provider_used"),
+        }
+        return ProviderOutput(translated=translated, provider_name=self.name, raw_info=raw_info)
 
 
 class LocalDictProvider(TranslationProvider):
@@ -215,16 +229,16 @@ def translate_text_with_direction(
 ) -> TranslationResult:
     src_lang, dest_lang = detect_direction(text, direction)
 
-    argos_provider = ArgosProvider()
+    cli_provider = CliProvider()
     local_provider = LocalDictProvider()
     placeholder_provider = PlaceholderProvider()
 
     providers = {
-        "argos": argos_provider,
+        "cli": cli_provider,
         "localdict": local_provider,
         "offline_placeholder": placeholder_provider,
     }
-    order = ["argos", "localdict", "offline_placeholder"]
+    order = ["cli", "localdict", "offline_placeholder"]
     if preferred_provider and preferred_provider != "auto" and preferred_provider in providers:
         order = [preferred_provider] + [p for p in order if p != preferred_provider]
 
@@ -250,8 +264,8 @@ def translate_text_with_direction(
 
     if not chosen:
         chosen = ProviderOutput(
-            translated="ERROR: translation_failed",
-            provider_name="offline_placeholder",
+            translated="",
+            provider_name="cli",
             raw_info={"fallback": True},
         )
 
@@ -261,8 +275,8 @@ def translate_text_with_direction(
     if chosen.provider_name == "localdict" and isinstance(chosen.raw_info, dict):
         error_chain.append("localdict used")
         error_chain.append(f"hits: {chosen.raw_info.get('hits', 0)}, misses: {chosen.raw_info.get('misses', 0)}")
-    if chosen.provider_name == "argos":
-        error_chain.append("argos used")
+    if chosen.provider_name == "cli":
+        error_chain.append("cli used")
 
     return TranslationResult(
         src_lang=src_lang,
@@ -285,12 +299,14 @@ def run_with_timeout(func, timeout: int = 5):
 
 
 def providers_health():
-    providers = [ArgosProvider(), LocalDictProvider(), PlaceholderProvider()]
+    cli_provider = CliProvider()
+    providers = [cli_provider, LocalDictProvider(), PlaceholderProvider()]
     status = {}
     for provider in providers:
         ok, message = provider.health_check()
         status[provider.name] = {"ok": ok, "message": message}
-    status["argos_models_dir"] = os.getenv("ARGOS_MODELS_DIR") or ""
+    status["cli_ready"] = cli_provider.is_ready()
+    status["cli_path_detected"] = cli_provider.cli_path or ""
     return status
 
 

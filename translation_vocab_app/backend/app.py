@@ -79,7 +79,7 @@ def translate(req: TranslateRequest):
     save_attempted = False
     notebook_saved = False
     saved_entry = None
-    if translation_success:
+    if translation_success and req.save:
         save_attempted = True
         saved_entry = upsert_entry(
             src_lang=result.src_lang,
@@ -180,9 +180,10 @@ def health():
         "providers": {
             name: {"ok": info["ok"], "message": info["message"]}
             for name, info in status.items()
-            if name not in {"argos_models_dir"}
+            if name not in {"cli_ready", "cli_path_detected"}
         },
-        "argos_models_dir": status.get("argos_models_dir", ""),
+        "cli_ready": status.get("cli_ready", False),
+        "cli_path_detected": status.get("cli_path_detected", ""),
         "last_error": None,
     }
 
@@ -205,13 +206,13 @@ def delete_notebook_entry(entry_id: int):
 
 
 def evaluate_translation_success(result) -> tuple[bool, str]:
-    provider_allowed = {"argos", "localdict"}
+    provider_allowed = {"cli", "localdict"}
     if result.provider_used not in provider_allowed:
         for err in result.error_chain:
             lowered = err.lower()
             if "localdict miss" in lowered:
                 return False, "miss_localdict"
-            if "argos models" in lowered or "argos translate not installed" in lowered:
+            if "translate_cli_path" in lowered or "cli" in lowered:
                 return False, "provider_error"
         return False, "provider_error"
     if not result.translated:

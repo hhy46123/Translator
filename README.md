@@ -35,9 +35,9 @@ translation_vocab_app/
 6) To run backend tests: `pytest`
 
 ## Features
-- Translation + enrichment (IPA, related forms, phrases, examples) with offline-first providers.
+- Translation + enrichment (IPA, related forms, phrases, examples) using a local translation CLI with a dictionary fallback.
 - Auto-translate: typing/paste triggers translation after a short debounce (default ~600ms). “Translate” button remains as a manual fallback.
-- Provider selection + automatic fallback chain (`local_nmt` → `localdict` → placeholder) with latency + provider diagnostics shown in the UI and `/api/health`.
+- Provider selection + automatic fallback chain (`cli` → `localdict`) with latency + provider diagnostics shown in the UI and `/api/health`.
 - Direction selector: force EN→KO, KO→EN, or Auto detection (Korean characters → KO source; Latin letters → EN source).
 - Notebook auto-saves successful translations into a dedicated SQLite database, with search + direction filters and book-style pagination.
 - SQLite persistence; database file is created automatically on first run. Optional `/api/seed` endpoint seeds sample data.
@@ -45,7 +45,7 @@ translation_vocab_app/
 
 ## UI navigation
 - Bottom navigation toggles between **Translate** and **Notebook** views within the same page.
-- Translate view: pick a provider (Auto/local_nmt/localdict/placeholder), view provider_used + latency, and see clear error messages when translation fails.
+- Translate view: pick a provider (Auto/cli/localdict/placeholder), view provider_used + latency, and see clear error messages when translation fails.
 - Notebook uses a two-page “open book” layout (left/right pages) with a visible spine, page numbers, and a subtle slide animation when flipping pages.
 
 ## API overview
@@ -78,17 +78,22 @@ Local dictionary files live in `translation_vocab_app/backend/services/dictionar
 
 The server caches dictionaries but reloads automatically if the files change timestamps. Restart the server if you replace the files entirely to ensure a clean reload.
 
-## Local NMT models (offline)
-Set `LOCAL_NMT_DIR` to a directory containing pre-downloaded models:
-- `{LOCAL_NMT_DIR}/en_ko/` (model + tokenizer files)
-- `{LOCAL_NMT_DIR}/ko_en/` (model + tokenizer files)
+## Local translation CLI
+Set `TRANSLATE_CLI_PATH` to the local CLI executable:
+- Windows (PowerShell): `$env:TRANSLATE_CLI_PATH="C:\\Path\\To\\translator.exe"`
+- macOS/Linux: `export TRANSLATE_CLI_PATH=/path/to/translator`
 
-Example:
+The CLI must accept:
 ```
-export LOCAL_NMT_DIR=/models/marian
+<TRANSLATE_CLI_PATH> --src <src_lang> --dest <dest_lang> --text "<text>"
 ```
 
-The health endpoint reports readiness and missing model paths.
+And output JSON like:
+```json
+{"translated": "...", "provider_used": "cli", "engine": "argos"}
+```
+
+See `tools/dummy_translate_cli.py` for a local dev stub.
 
 ## Notebook auto-save
 Each `/api/translate` call evaluates `translation_success`. Successful translations are upserted into
