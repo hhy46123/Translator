@@ -79,7 +79,7 @@ def translate(req: TranslateRequest):
     save_attempted = False
     notebook_saved = False
     saved_entry = None
-    if translation_success and req.save:
+    if translation_success:
         save_attempted = True
         saved_entry = upsert_entry(
             src_lang=result.src_lang,
@@ -206,38 +206,10 @@ def delete_notebook_entry(entry_id: int):
 
 
 def evaluate_translation_success(result) -> tuple[bool, str]:
-    provider_allowed = {"cli", "localdict"}
-    if result.provider_used not in provider_allowed:
-        for err in result.error_chain:
-            lowered = err.lower()
-            if "localdict miss" in lowered:
-                return False, "miss_localdict"
-            if "translator_cli not found" in lowered or "cli" in lowered:
-                return False, "provider_error"
-        return False, "provider_error"
     if not result.translated:
-        return False, "provider_error"
-    placeholder_prefixes = ("오프라인 번역:", "[offline]")
-    if result.translated.strip().startswith(placeholder_prefixes):
-        return False, "placeholder"
-
-    normalized_original = normalize_text(result.original, result.src_lang)
-    normalized_translated = normalize_text(result.translated, result.dest_lang)
-    if normalized_original == normalized_translated:
+        return False, "failed"
+    if result.translated.strip() == result.original.strip():
         return False, "echo_original"
-
-    for err in result.error_chain:
-        lowered = err.lower()
-        if "ssl" in lowered or "certificate" in lowered or "network" in lowered or "unavailable" in lowered:
-            return False, "provider_error"
-
-    if result.provider_used == "localdict":
-        hits = 0
-        if isinstance(result.raw_info, dict):
-            hits = result.raw_info.get("hits", 0)
-        if hits == 0:
-            return False, "miss_localdict"
-
     return True, "success"
 
 

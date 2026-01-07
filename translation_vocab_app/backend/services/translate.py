@@ -7,8 +7,6 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
-import json
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -65,7 +63,7 @@ class TranslationProvider:
 
 
 class CliProvider(TranslationProvider):
-    name = "cli"
+    name = "argos"
 
     def __init__(self) -> None:
         self.cli_path = Path(__file__).resolve().parents[1] / "tools" / "translator_cli.py"
@@ -82,7 +80,7 @@ class CliProvider(TranslationProvider):
 
         try:
             result = subprocess.run(
-                [sys.executable, str(self.cli_path), "--src", src_lang, "--dest", dest_lang, "--text", text],
+                [sys.executable, str(self.cli_path), src_lang, dest_lang, text],
                 capture_output=True,
                 text=True,
                 timeout=timeout,
@@ -102,71 +100,6 @@ class CliProvider(TranslationProvider):
             raise RuntimeError("cli returned empty translation")
 
         return ProviderOutput(translated=translated, provider_name=self.name, raw_info={"engine": "argos"})
-
-
-class LocalDictProvider(TranslationProvider):
-    name = "localdict"
-
-    def __init__(self) -> None:
-        base_dir = Path(__file__).resolve().parent / "dictionaries"
-        self.en_ko_path = base_dir / "en_ko.json"
-        self.ko_en_path = base_dir / "ko_en.json"
-        self._en_ko_cache: dict[str, str] | None = None
-        self._ko_en_cache: dict[str, str] | None = None
-        self._en_ko_mtime: float | None = None
-        self._ko_en_mtime: float | None = None
-        self._builtins = load_builtin_dictionaries()
-
-    def translate(self, text: str, src_lang: str, dest_lang: str, timeout: int = 5) -> ProviderOutput:
-        en_ko, ko_en = self._load_dictionaries()
-        if src_lang == "en" and dest_lang == "ko":
-            translated, hits, misses = translate_en_to_ko(text, en_ko)
-        else:
-            translated, hits, misses = translate_ko_to_en(text, ko_en)
-        if not translated:
-            raise RuntimeError("empty translation from localdict")
-        return ProviderOutput(
-            translated=translated,
-            provider_name=self.name,
-            raw_info={"hits": hits, "misses": misses},
-        )
-
-    def _load_dictionaries(self) -> tuple[dict[str, str], dict[str, str]]:
-        en_ko = self._load_dict(self.en_ko_path, self._builtins["en_ko"], "en_ko")
-        ko_en = self._load_dict(self.ko_en_path, self._builtins["ko_en"], "ko_en")
-        return en_ko, ko_en
-
-    def _load_dict(self, path: Path, fallback: dict[str, str], which: str) -> dict[str, str]:
-        try:
-            mtime = path.stat().st_mtime
-        except FileNotFoundError:
-            return fallback
-
-        if which == "en_ko" and self._en_ko_cache is not None and self._en_ko_mtime == mtime:
-            return self._en_ko_cache
-        if which == "ko_en" and self._ko_en_cache is not None and self._ko_en_mtime == mtime:
-            return self._ko_en_cache
-
-        with path.open("r", encoding="utf-8") as handle:
-            data = json.load(handle) or {}
-        if not isinstance(data, dict) or not data:
-            data = fallback
-
-        if which == "en_ko":
-            self._en_ko_cache = data
-            self._en_ko_mtime = mtime
-        else:
-            self._ko_en_cache = data
-            self._ko_en_mtime = mtime
-        return data
-
-
-class PlaceholderProvider(TranslationProvider):
-    name = "offline_placeholder"
-
-    def translate(self, text: str, src_lang: str, dest_lang: str, timeout: int = 5) -> ProviderOutput:
-        message = "Offline translation unavailable. Update dictionary files for local translations."
-        return ProviderOutput(translated=message, provider_name=self.name, raw_info={"offline": True})
 
 
 def generate_related(text: str, src_lang: str, dest_lang: str) -> Dict[str, List[str]]:
@@ -219,17 +152,14 @@ def translate_text_with_direction(
     src_lang, dest_lang = detect_direction(text, direction)
 
     cli_provider = CliProvider()
-    local_provider = LocalDictProvider()
-    placeholder_provider = PlaceholderProvider()
 
-    providers = {
-        "cli": cli_provider,
-        "localdict": local_provider,
-        "offline_placeholder": placeholder_provider,
-    }
-    order = ["cli", "localdict", "offline_placeholder"]
-    if preferred_provider and preferred_provider != "auto" and preferred_provider in providers:
-        order = [preferred_provider] + [p for p in order if p != preferred_provider]
+    providers = {"argos": cli_provider}
+    order = ["argos"]
+    normalized_preference = preferred_provider
+    if preferred_provider == "cli":
+        normalized_preference = "argos"
+    if normalized_preference and normalized_preference != "auto" and normalized_preference in providers:
+        order = [normalized_preference]
 
     error_chain: List[str] = []
     chosen: Optional[ProviderOutput] = None
@@ -254,18 +184,15 @@ def translate_text_with_direction(
     if not chosen:
         chosen = ProviderOutput(
             translated="",
-            provider_name="cli",
+            provider_name="argos",
             raw_info={"fallback": True},
         )
 
     ipa_text = generate_ipa(text, src_lang)
     related = generate_related(text, src_lang, dest_lang)
 
-    if chosen.provider_name == "localdict" and isinstance(chosen.raw_info, dict):
-        error_chain.append("localdict used")
-        error_chain.append(f"hits: {chosen.raw_info.get('hits', 0)}, misses: {chosen.raw_info.get('misses', 0)}")
-    if chosen.provider_name == "cli":
-        error_chain.append("cli used")
+    if chosen.provider_name == "argos":
+        error_chain.append("argos used")
 
     return TranslationResult(
         src_lang=src_lang,
@@ -289,7 +216,7 @@ def run_with_timeout(func, timeout: int = 5):
 
 def providers_health():
     cli_provider = CliProvider()
-    providers = [cli_provider, LocalDictProvider(), PlaceholderProvider()]
+    providers = [cli_provider]
     status = {}
     for provider in providers:
         ok, message = provider.health_check()
