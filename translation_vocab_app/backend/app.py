@@ -147,6 +147,11 @@ def health():
     status = providers_health()
     return {
         "server_ok": True,
-        "providers": {name: {"ok": info["ok"], "message": info["message"]} for name, info in status.items()},
+        "providers": {
+            name: {"ok": info["ok"], "message": info["message"]}
+            for name, info in status.items()
+            if name != "deepl_key_present"
+        },
+        "deepl_key_present": status.get("deepl_key_present", False),
         "last_error": None,
     }

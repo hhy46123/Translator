@@ -10,7 +10,7 @@ from typing import Dict, List, Optional, Tuple
 import json
 import os
 from urllib.parse import urlencode
-from urllib.request import urlopen, Request
+from urllib.request import Request, urlopen
 
 
 def _contains_korean(text: str) -> bool:
@@ -71,6 +71,9 @@ class DeepLProvider(TranslationProvider):
         self.api_key = os.getenv("DEEPL_API_KEY")
         self.api_url = os.getenv("DEEPL_API_URL", "https://api-free.deepl.com/v2/translate")
 
+    def is_available(self) -> bool:
+        return bool(self.api_key)
+
     def translate(self, text: str, src_lang: str, dest_lang: str, timeout: int = 5) -> ProviderOutput:
         if not self.api_key:
             raise RuntimeError("DEEPL_API_KEY is not set")
@@ -103,6 +106,61 @@ class DeepLProvider(TranslationProvider):
             translated=translated,
             provider_name=self.name,
             raw_info={"endpoint": self.api_url},
+        )
+
+
+class GoogleTransProvider(TranslationProvider):
+    name = "googletrans"
+
+    def __init__(self) -> None:
+        try:
+            from googletrans import Translator  # type: ignore
+        except Exception:  # pragma: no cover
+            self.translator = None
+        else:
+            self.translator = Translator()
+
+    def is_available(self) -> bool:
+        return self.translator is not None
+
+    def translate(self, text: str, src_lang: str, dest_lang: str, timeout: int = 5) -> ProviderOutput:
+        if not self.translator:
+            raise RuntimeError("googletrans unavailable")
+
+        def _task():
+            detection = self.translator.detect(text)
+            src = detection.lang or src_lang
+            dest = dest_lang
+            translation = self.translator.translate(text, src=src, dest=dest)
+            return translation.text, detection.lang
+
+        translated_text, detected = run_with_timeout(_task, timeout=timeout)
+        if not translated_text:
+            raise RuntimeError("empty translation from googletrans")
+        return ProviderOutput(
+            translated=translated_text,
+            provider_name=self.name,
+            raw_info={"detected": detected},
+        )
+
+
+class HttpFallbackProvider(TranslationProvider):
+    name = "http_fallback"
+    ENDPOINT = "https://api.mymemory.translated.net/get"
+
+    def translate(self, text: str, src_lang: str, dest_lang: str, timeout: int = 5) -> ProviderOutput:
+        params = {"q": text, "langpair": f"{src_lang}|{dest_lang}"}
+        query = urlencode(params)
+        req = Request(f"{self.ENDPOINT}?{query}")
+        with urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        translated = data.get("responseData", {}).get("translatedText")
+        if not translated:
+            raise RuntimeError("empty translation from http fallback")
+        return ProviderOutput(
+            translated=translated,
+            provider_name=self.name,
+            raw_info={"endpoint": self.ENDPOINT},
         )
 
 
@@ -202,11 +260,23 @@ def translate_text_with_direction(
 ) -> TranslationResult:
     src_lang, dest_lang = detect_direction(text, direction)
 
+    deepl_provider = DeepLProvider()
+    google_provider = GoogleTransProvider()
+    http_provider = HttpFallbackProvider()
+    offline_provider = OfflineProvider()
+
     providers = {
-        "deepl": DeepLProvider(),
-        "offline": OfflineProvider(),
+        "deepl": deepl_provider,
+        "googletrans": google_provider,
+        "http_fallback": http_provider,
+        "offline": offline_provider,
     }
-    order = ["deepl", "offline"]
+    order = []
+    if deepl_provider.is_available():
+        order.append("deepl")
+    if google_provider.is_available():
+        order.append("googletrans")
+    order.extend(["http_fallback", "offline"])
     if preferred_provider and preferred_provider != "auto" and preferred_provider in providers:
         order = [preferred_provider] + [p for p in order if p != preferred_provider]
 
@@ -261,9 +331,11 @@ def run_with_timeout(func, timeout: int = 5):
 
 
 def providers_health():
-    providers = [DeepLProvider(), OfflineProvider()]
+    deepl = DeepLProvider()
+    providers = [deepl, GoogleTransProvider(), HttpFallbackProvider(), OfflineProvider()]
     status = {}
     for provider in providers:
         ok, message = provider.health_check()
         status[provider.name] = {"ok": ok, "message": message}
+    status["deepl_key_present"] = deepl.is_available()
     return status
