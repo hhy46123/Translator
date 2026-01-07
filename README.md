@@ -34,15 +34,10 @@ translation_vocab_app/
 5) Open http://localhost:8000 in your browser. The backend serves the frontend directly, so CORS is not required.
 6) To run backend tests: `pytest`
 
-## DeepL configuration
-Set environment variables before running the server:
-- `DEEPL_API_KEY` (required for online translation)
-- `DEEPL_API_URL` (optional, default: `https://api-free.deepl.com/v2/translate`)
-
 ## Features
 - Translation + enrichment (IPA, related forms, phrases, examples) with pluggable providers and offline-safe fallback.
 - Auto-translate: typing/paste triggers translation after a short debounce (default ~600ms). “Translate” button remains as a manual fallback.
-- Provider selection + automatic fallback chain (`argos` → `deepl` → `googletrans` → `http_fallback` → placeholder) with latency + provider diagnostics shown in the UI and `/api/health`.
+- Provider selection + automatic fallback chain (`localdict` → placeholder) with latency + provider diagnostics shown in the UI and `/api/health`.
 - Direction selector: force EN→KO, KO→EN, or Auto detection (Korean characters → KO source; Latin letters → EN source).
 - Vocabulary notebook with notes/categories (`daily`, `vocab`, or custom), wrong-count tracking, success rate, O/X grading modal, and book-style two-page spreads (20 items per page, 40 per spread) with Prev/Next + arrow-key navigation.
 - SQLite persistence; database file is created automatically on first run. Optional `/api/seed` endpoint seeds sample data.
@@ -50,7 +45,7 @@ Set environment variables before running the server:
 
 ## UI navigation
 - Bottom navigation toggles between **Translate** and **Notebook** views within the same page.
-- Translate view: pick a provider (Auto/argos/deepl/googletrans/http_fallback/placeholder), view provider_used + latency, and see clear error messages when translation fails.
+- Translate view: pick a provider (Auto/localdict/placeholder), view provider_used + latency, and see clear error messages when translation fails.
 - Notebook uses a two-page “open book” layout (left/right pages) with a visible spine, page numbers, and a subtle slide animation when flipping pages.
 
 ## API overview
@@ -65,3 +60,18 @@ Set environment variables before running the server:
 
 ## Clipboard behavior
 Browsers cannot watch the clipboard continuously. The UI provides a **Paste** button plus auto-translate on input/paste events (and Ctrl+V where supported).
+
+## Dictionary files
+Local dictionary files live in `translation_vocab_app/backend/services/dictionaries/`:
+- `en_ko.json` for English → Korean
+- `ko_en.json` for Korean → English
+
+**Format**
+```json
+{
+  "hello": "안녕하세요",
+  "invite": "초대"
+}
+```
+
+The server caches dictionaries but reloads automatically if the files change timestamps. Restart the server if you replace the files entirely to ensure a clean reload.

@@ -9,9 +9,7 @@ from typing import Dict, List, Optional, Tuple
 
 import json
 import os
-
-import certifi
-import requests
+from pathlib import Path
 
 
 def _contains_korean(text: str) -> bool:
@@ -65,148 +63,68 @@ class TranslationProvider:
             return False, str(exc)
 
 
-class DeepLProvider(TranslationProvider):
-    name = "deepl"
+class LocalDictProvider(TranslationProvider):
+    name = "localdict"
 
     def __init__(self) -> None:
-        self.api_key = os.getenv("DEEPL_API_KEY")
-        self.api_url = os.getenv("DEEPL_API_URL", "https://api-free.deepl.com/v2/translate")
-
-    def is_available(self) -> bool:
-        return bool(self.api_key)
+        base_dir = Path(__file__).resolve().parent / "dictionaries"
+        self.en_ko_path = base_dir / "en_ko.json"
+        self.ko_en_path = base_dir / "ko_en.json"
+        self._en_ko_cache: dict[str, str] | None = None
+        self._ko_en_cache: dict[str, str] | None = None
+        self._en_ko_mtime: float | None = None
+        self._ko_en_mtime: float | None = None
+        self._builtins = load_builtin_dictionaries()
 
     def translate(self, text: str, src_lang: str, dest_lang: str, timeout: int = 5) -> ProviderOutput:
-        if not self.api_key:
-            raise RuntimeError("DEEPL_API_KEY is not set")
-
-        payload = {
-            "auth_key": self.api_key,
-            "text": text,
-            "source_lang": src_lang.upper(),
-            "target_lang": dest_lang.upper(),
-        }
-        resp = requests.post(
-            self.api_url,
-            data=payload,
-            timeout=10,
-            verify=certifi.where(),
-        )
-        resp.raise_for_status()
-        data = resp.json()
-
-        translated = None
-        if isinstance(data, dict):
-            translated = data.get("translatedText")
-            if not translated and "translations" in data:
-                translations = data.get("translations") or []
-                if translations:
-                    translated = translations[0].get("text")
-
-        if not translated:
-            raise RuntimeError("empty translation from DeepL")
-
-        return ProviderOutput(
-            translated=translated,
-            provider_name=self.name,
-            raw_info={"endpoint": self.api_url},
-        )
-
-
-class GoogleTransProvider(TranslationProvider):
-    name = "googletrans"
-
-    def __init__(self) -> None:
-        try:
-            from googletrans import Translator  # type: ignore
-        except Exception:  # pragma: no cover
-            self.translator = None
+        en_ko, ko_en = self._load_dictionaries()
+        if src_lang == "en" and dest_lang == "ko":
+            translated, hits, misses = translate_en_to_ko(text, en_ko)
         else:
-            self.translator = Translator()
-
-    def is_available(self) -> bool:
-        return self.translator is not None
-
-    def translate(self, text: str, src_lang: str, dest_lang: str, timeout: int = 5) -> ProviderOutput:
-        if not self.translator:
-            raise RuntimeError("googletrans unavailable")
-
-        def _task():
-            detection = self.translator.detect(text)
-            src = detection.lang or src_lang
-            dest = dest_lang
-            translation = self.translator.translate(text, src=src, dest=dest)
-            return translation.text, detection.lang
-
-        translated_text, detected = run_with_timeout(_task, timeout=timeout)
-        if not translated_text:
-            raise RuntimeError("empty translation from googletrans")
-        return ProviderOutput(
-            translated=translated_text,
-            provider_name=self.name,
-            raw_info={"detected": detected},
-        )
-
-
-class HttpFallbackProvider(TranslationProvider):
-    name = "http_fallback"
-    ENDPOINT = "https://api.mymemory.translated.net/get"
-
-    def translate(self, text: str, src_lang: str, dest_lang: str, timeout: int = 5) -> ProviderOutput:
-        params = {"q": text, "langpair": f"{src_lang}|{dest_lang}"}
-        resp = requests.get(
-            self.ENDPOINT,
-            params=params,
-            timeout=10,
-            verify=certifi.where(),
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        translated = data.get("responseData", {}).get("translatedText")
+            translated, hits, misses = translate_ko_to_en(text, ko_en)
         if not translated:
-            raise RuntimeError("empty translation from http fallback")
+            raise RuntimeError("empty translation from localdict")
         return ProviderOutput(
             translated=translated,
             provider_name=self.name,
-            raw_info={"endpoint": self.ENDPOINT},
+            raw_info={"hits": hits, "misses": misses},
         )
 
+    def _load_dictionaries(self) -> tuple[dict[str, str], dict[str, str]]:
+        en_ko = self._load_dict(self.en_ko_path, self._builtins["en_ko"], "en_ko")
+        ko_en = self._load_dict(self.ko_en_path, self._builtins["ko_en"], "ko_en")
+        return en_ko, ko_en
 
-class ArgosProvider(TranslationProvider):
-    name = "argos"
-
-    def translate(self, text: str, src_lang: str, dest_lang: str, timeout: int = 5) -> ProviderOutput:
+    def _load_dict(self, path: Path, fallback: dict[str, str], which: str) -> dict[str, str]:
         try:
-            import argostranslate.translate as argos_translate  # type: ignore
-        except Exception as exc:  # pragma: no cover - optional dependency
-            raise RuntimeError(
-                "Argos Translate not installed. Install argostranslate and language packages."
-            ) from exc
+            mtime = path.stat().st_mtime
+        except FileNotFoundError:
+            return fallback
 
-        try:
-            translated = argos_translate.translate(text, src_lang, dest_lang)
-        except Exception as exc:  # pragma: no cover - optional runtime errors
-            raise RuntimeError("Argos Translate failed. Ensure language packages are installed.") from exc
+        if which == "en_ko" and self._en_ko_cache is not None and self._en_ko_mtime == mtime:
+            return self._en_ko_cache
+        if which == "ko_en" and self._ko_en_cache is not None and self._ko_en_mtime == mtime:
+            return self._ko_en_cache
 
-        if not translated:
-            raise RuntimeError("empty translation from Argos Translate")
+        with path.open("r", encoding="utf-8") as handle:
+            data = json.load(handle) or {}
+        if not isinstance(data, dict) or not data:
+            data = fallback
 
-        return ProviderOutput(translated=translated, provider_name=self.name, raw_info={"offline": True})
-
-    def health_check(self) -> Tuple[bool, str]:
-        try:
-            self.translate("hello", "en", "ko", timeout=3)
-            return True, "ok"
-        except Exception as exc:  # pragma: no cover - optional dependency
-            return False, str(exc)
+        if which == "en_ko":
+            self._en_ko_cache = data
+            self._en_ko_mtime = mtime
+        else:
+            self._ko_en_cache = data
+            self._ko_en_mtime = mtime
+        return data
 
 
 class PlaceholderProvider(TranslationProvider):
     name = "offline_placeholder"
 
     def translate(self, text: str, src_lang: str, dest_lang: str, timeout: int = 5) -> ProviderOutput:
-        message = (
-            "Offline translation unavailable. Install Argos Translate language packages for offline support."
-        )
+        message = "Offline translation unavailable. Update dictionary files for local translations."
         return ProviderOutput(translated=message, provider_name=self.name, raw_info={"offline": True})
 
 
@@ -259,25 +177,14 @@ def translate_text_with_direction(
 ) -> TranslationResult:
     src_lang, dest_lang = detect_direction(text, direction)
 
-    argos_provider = ArgosProvider()
-    deepl_provider = DeepLProvider()
-    google_provider = GoogleTransProvider()
-    http_provider = HttpFallbackProvider()
+    local_provider = LocalDictProvider()
     placeholder_provider = PlaceholderProvider()
 
     providers = {
-        "argos": argos_provider,
-        "deepl": deepl_provider,
-        "googletrans": google_provider,
-        "http_fallback": http_provider,
+        "localdict": local_provider,
         "offline_placeholder": placeholder_provider,
     }
-    order = ["argos"]
-    if deepl_provider.is_available():
-        order.append("deepl")
-    if google_provider.is_available():
-        order.append("googletrans")
-    order.extend(["http_fallback", "offline_placeholder"])
+    order = ["localdict", "offline_placeholder"]
     if preferred_provider and preferred_provider != "auto" and preferred_provider in providers:
         order = [preferred_provider] + [p for p in order if p != preferred_provider]
 
@@ -303,13 +210,17 @@ def translate_text_with_direction(
 
     if not chosen:
         chosen = ProviderOutput(
-            translated="Offline translation unavailable. Install Argos Translate language packages for offline support.",
+            translated="Offline translation unavailable. Update dictionary files for local translations.",
             provider_name="offline_placeholder",
             raw_info={"fallback": True},
         )
 
     ipa_text = generate_ipa(text, src_lang)
     related = generate_related(text, src_lang, dest_lang)
+
+    if chosen.provider_name == "localdict" and isinstance(chosen.raw_info, dict):
+        error_chain.append("localdict used")
+        error_chain.append(f"hits: {chosen.raw_info.get('hits', 0)}, misses: {chosen.raw_info.get('misses', 0)}")
 
     return TranslationResult(
         src_lang=src_lang,
@@ -332,11 +243,179 @@ def run_with_timeout(func, timeout: int = 5):
 
 
 def providers_health():
-    deepl = DeepLProvider()
-    providers = [ArgosProvider(), deepl, GoogleTransProvider(), HttpFallbackProvider(), PlaceholderProvider()]
+    providers = [LocalDictProvider(), PlaceholderProvider()]
     status = {}
     for provider in providers:
         ok, message = provider.health_check()
         status[provider.name] = {"ok": ok, "message": message}
-    status["deepl_key_present"] = deepl.is_available()
     return status
+
+
+def load_builtin_dictionaries() -> dict[str, dict[str, str]]:
+    en_words = [
+        "hello","hi","goodbye","please","thanks","sorry","yes","no","today","tomorrow","yesterday",
+        "love","invite","string","cat","dog","eat","go","make","do","be","have","good","bad","new","old",
+        "man","woman","child","friend","family","home","house","school","work","study","book","water","food",
+        "coffee","tea","milk","apple","banana","orange","rice","bread","meat","fish","time","day","week",
+        "month","year","morning","night","happy","sad","fast","slow","big","small","hot","cold","city","country",
+    ]
+    en_ko = {word: word for word in en_words}
+    en_ko.update(
+        {
+            "hello": "안녕하세요",
+            "hi": "안녕",
+            "goodbye": "안녕히 가세요",
+            "please": "제발",
+            "thanks": "감사합니다",
+            "sorry": "미안합니다",
+            "yes": "네",
+            "no": "아니요",
+            "today": "오늘",
+            "tomorrow": "내일",
+            "yesterday": "어제",
+            "love": "사랑",
+            "invite": "초대",
+            "string": "문자열",
+            "cat": "고양이",
+            "dog": "개",
+            "eat": "먹다",
+            "go": "가다",
+            "make": "만들다",
+            "do": "하다",
+            "be": "이다",
+            "have": "가지다",
+            "good": "좋다",
+            "bad": "나쁘다",
+            "new": "새로운",
+            "old": "오래된",
+            "man": "남자",
+            "woman": "여자",
+            "child": "아이",
+            "friend": "친구",
+            "family": "가족",
+            "home": "집",
+            "house": "집",
+            "school": "학교",
+            "work": "일",
+            "study": "공부하다",
+            "book": "책",
+            "water": "물",
+            "food": "음식",
+            "coffee": "커피",
+            "tea": "차",
+            "milk": "우유",
+            "apple": "사과",
+            "banana": "바나나",
+            "orange": "오렌지",
+            "rice": "쌀",
+            "bread": "빵",
+            "meat": "고기",
+            "fish": "생선",
+            "time": "시간",
+            "day": "날",
+            "week": "주",
+            "month": "달",
+            "year": "년",
+            "morning": "아침",
+            "night": "밤",
+            "happy": "행복한",
+            "sad": "슬픈",
+            "fast": "빠른",
+            "slow": "느린",
+            "big": "큰",
+            "small": "작은",
+            "hot": "뜨거운",
+            "cold": "차가운",
+            "city": "도시",
+            "country": "나라",
+        }
+    )
+    ko_en = {value: key for key, value in en_ko.items()}
+    return {"en_ko": en_ko, "ko_en": ko_en}
+
+
+def translate_en_to_ko(text: str, dictionary: dict[str, str]) -> tuple[str, int, int]:
+    tokens = tokenize(text)
+    hits = 0
+    misses = 0
+    output = []
+    for token, token_type in tokens:
+        if token_type != "word":
+            output.append(token)
+            continue
+        lowered = token.lower()
+        translated = None
+        if lowered in {"i", "you"}:
+            translated = dictionary.get(lowered)
+        if translated is None and lowered.endswith("s") and len(lowered) > 3:
+            translated = dictionary.get(lowered[:-1])
+        if translated is None:
+            translated = dictionary.get(lowered)
+        if translated:
+            hits += 1
+            output.append(translated)
+        else:
+            misses += 1
+            output.append(token)
+    rendered = "".join(output)
+    rendered = apply_en_to_ko_grammar(rendered)
+    return rendered, hits, misses
+
+
+def translate_ko_to_en(text: str, dictionary: dict[str, str]) -> tuple[str, int, int]:
+    tokens = tokenize(text)
+    hits = 0
+    misses = 0
+    output = []
+    for token, token_type in tokens:
+        if token_type != "word":
+            output.append(token)
+            continue
+        stripped = strip_korean_particles(token)
+        stripped = strip_korean_endings(stripped)
+        translated = dictionary.get(stripped)
+        if translated:
+            hits += 1
+            output.append(translated)
+        else:
+            misses += 1
+            output.append(token)
+    return "".join(output), hits, misses
+
+
+def tokenize(text: str) -> list[tuple[str, str]]:
+    tokens: list[tuple[str, str]] = []
+    buffer = ""
+    for ch in text:
+        if ch.isalnum() or ch in ("'", "-"):
+            buffer += ch
+        else:
+            if buffer:
+                tokens.append((buffer, "word"))
+                buffer = ""
+            tokens.append((ch, "punct"))
+    if buffer:
+        tokens.append((buffer, "word"))
+    return tokens
+
+
+def apply_en_to_ko_grammar(text: str) -> str:
+    text = re.sub(r"\bI am ([^\\s]+)", r"나는 \\1이다", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bYou are ([^\\s]+)", r"너는 \\1이다", text, flags=re.IGNORECASE)
+    return text
+
+
+def strip_korean_particles(token: str) -> str:
+    particles = ("은", "는", "이", "가", "을", "를", "에", "에서", "과", "와", "도", "만")
+    for particle in particles:
+        if token.endswith(particle):
+            return token[: -len(particle)]
+    return token
+
+
+def strip_korean_endings(token: str) -> str:
+    endings = ("입니다", "해요", "하세요", "했어요")
+    for ending in endings:
+        if token.endswith(ending):
+            return token[: -len(ending)]
+    return token
